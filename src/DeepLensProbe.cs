@@ -78,13 +78,13 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.1";
+        Description = "DeepLens v0.6.2";
     }
 
     public override void OnLoad()
     {
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.1 - waiting";
+        label.Text = "DeepLens v0.6.2 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -152,7 +152,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.1 - parameter inspector";
+            label.Text = "DeepLens v0.6.2 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -293,20 +293,20 @@ public class DeepLensProbe : Indicator
             + $"FootType={footType} ShowStyle={showStyle} InputData={inputData}\n"
             + $"AutoGrouping={autoGrouping} ManualTicks={manualTicks} GroupMode={groupMode}\n"
             + $"FilterMin={filterMin} FilterMax={filterMax} Proportion={proportion}\n"
-            + "DELTA / PROFILE source | numeric comparison only";
+            + "DELTA / PROFILE source | profile width preview";
         // Comparison only: user-selected source is Delta / Volume / Manual / Fixed.
         // Do not render filtered or non-volume data as if it were verified.
-        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
+        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.1 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.2 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.1 - waiting for bars";
+            label.Text = "DeepLens v0.6.2 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -358,7 +358,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.1 - no VBP levels";
+            label.Text = "DeepLens v0.6.2 - no VBP levels";
             return;
         }
 
@@ -373,7 +373,7 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.1 | DELTA TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.2 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
 
@@ -405,10 +405,15 @@ public class DeepLensProbe : Indicator
             long[] asks = new long[MaxRows];
             long[] totals = new long[MaxRows];
             bool[] present = new bool[MaxRows];
+            var fullDelta = new Dictionary<int, long>();
             foreach (var entries in bar.VbpListAll.SortedLHValues)
             {
                 if (entries == null || entries.Length == 0 || entries[0] == null) continue;
                 var level = entries[0];
+                int bucket = (int)Math.Floor((double)level.PinT / group);
+                long oldDelta = 0;
+                fullDelta.TryGetValue(bucket, out oldDelta);
+                fullDelta[bucket] = oldDelta + (long)level.AskVol - level.BidVol;
                 if (level.PinT > top || level.PinT < low) continue;
                 int k = (top - level.PinT) / group;
                 if (k >= visibleRows) continue;
@@ -417,6 +422,9 @@ public class DeepLensProbe : Indicator
                 totals[k] += level.TotVol;
                 present[k] = true;
             }
+            long deltaScale = 1;
+            foreach (var value in fullDelta.Values)
+                deltaScale = Math.Max(deltaScale, Math.Abs(value));
             long scale = 1;
             for (int k = 0; k < visibleRows; k++)
                 if (totals[k] > scale) scale = totals[k];
@@ -448,11 +456,21 @@ public class DeepLensProbe : Indicator
                 b.LineColor = a.LineColor = isPoc ? pocColor : ColorRef.FromRgb(65,75,85);
                 b.LineWidth = a.LineWidth = isPoc ? pocWidth : borderWidth;
                 long d = asks[k] - bids[k];
-                b.Text = !showZero && d == 0 ? "     " : $"  {d,5}  ";
-                b.BackColor = (d < 0 ? bidColor : askColor).WithOpacity((byte)(255 * Math.Max(0, Math.Min(100, opacity)) / 100));
-                b.ForeColor = d < 0 ? bidText : askText;
-                b.Visible = true;
-                a.Visible = false;
+                int blocks = d == 0 ? 0 : Math.Max(1, (int)Math.Round(9.0 * Math.Abs(d) / deltaScale));
+                ColorRef profileColor = (d < 0 ? bidColor : askColor).WithOpacity((byte)(255 * Math.Max(0, Math.Min(100, opacity)) / 100));
+                b.Text = blocks == 0 ? "" : new string('█', blocks);
+                b.ForeColor = profileColor;
+                b.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
+                b.LineColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
+                b.LineWidth = 0;
+                b.Visible = blocks > 0;
+                a.X = x;
+                a.Text = !showZero && d == 0 ? "" : $"{d}";
+                a.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
+                a.ForeColor = d < 0 ? bidText : askText;
+                a.LineColor = isPoc ? pocColor : ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
+                a.LineWidth = isPoc ? pocWidth : 0;
+                a.Visible = showZero || d != 0;
             }
         }
         footer.Text = $"Fixed-grid comparison | {visibleRows} rows | offset {DetailOffset} ticks";
