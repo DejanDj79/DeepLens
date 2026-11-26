@@ -82,13 +82,13 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.5.0";
+        Description = "DeepLens v0.5.1";
     }
 
     public override void OnLoad()
     {
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.5.0 - waiting";
+        label.Text = "DeepLens v0.5.1 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -156,7 +156,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.5.0 - parameter inspector";
+            label.Text = "DeepLens v0.5.1 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -226,6 +226,9 @@ public class DeepLensProbe : Indicator
             parameterColumns[col].Visible = false;
         var style = VAn.GetParamsById(InspectIndex);
         bool inherited = false;
+        string rawPoc = "missing", rawBid = "missing", rawAsk = "missing";
+        int revision = 17;
+        int parameterCount = 0;
         bool showZero = true, enablePoc = true;
         int sourceFont = 10, opacity = 70;
         float borderWidth = 1, pocWidth = 1;
@@ -240,7 +243,15 @@ public class DeepLensProbe : Indicator
             {
                 string raw = prop.Value == null ? "" : prop.Value.ToString();
                 if (raw == null) continue;
-                if (prop.Name == "EnablePoc") bool.TryParse(raw, out enablePoc);
+                parameterCount++;
+                if (prop.Name != null)
+                    foreach (char ch in prop.Name) revision = unchecked(revision * 31 + ch);
+                foreach (char ch in raw) revision = unchecked(revision * 31 + ch);
+                if (prop.Name == "EnablePoc")
+                {
+                    rawPoc = raw;
+                    if (bool.TryParse(raw, out bool ep)) enablePoc = ep;
+                }
                 if (prop.Name == "ShowZeroOnText") bool.TryParse(raw, out showZero);
                 if (prop.Name == "FontSize" && int.TryParse(raw, out int f)) sourceFont = f;
                 if (prop.Name == "BackOpacity" && int.TryParse(raw, out int o)) opacity = o;
@@ -251,6 +262,8 @@ public class DeepLensProbe : Indicator
                 {
                     string bv = FindColor(raw, "FixedBidColor");
                     string av = FindColor(raw, "FixedAskColor");
+                    rawBid = bv;
+                    rawAsk = av;
                     if (ColorRef.TryParse(bv, out var bc) && ColorRef.TryParse(av, out var ac))
                     {
                         bidColor = bc;
@@ -269,7 +282,7 @@ public class DeepLensProbe : Indicator
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.5.0 - waiting for bars";
+            label.Text = "DeepLens v0.5.1 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -321,7 +334,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.5.0 - no VBP levels";
+            label.Text = "DeepLens v0.5.1 - no VBP levels";
             return;
         }
 
@@ -332,10 +345,14 @@ public class DeepLensProbe : Indicator
         int top = AutoFit ? high : Math.Min(high, Math.Max(low + rows - 1, focus + DetailOffset + rows / 2));
         int visibleRows = Math.Min(rows, (top - low + group) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.5.0 | {(AutoFit ? "AUTO FIT" : "DETAIL")} | {group} tick/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.5.1 | {(AutoFit ? "AUTO FIT" : "DETAIL")} | {group} tick/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
-        settingsStatus.Text = inherited ? "Deep Print: base colors linked (preview)" : "Deep Print: fallback style";
+        settingsStatus.Text = $"Index {InspectIndex}: {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
+            + $"Read {DateTime.Now:HH:mm:ss} | Rev {revision:X8}\n"
+            + $"FixedBid {rawBid} | FixedAsk {rawAsk}\n"
+            + $"EnablePoc raw: {rawPoc} | applied: {enablePoc}\n"
+            + (inherited ? "Base colors linked (preview)" : "Fallback style");
         for (int k = 0; k < visibleRows; k++)
         {
             int tick = top - k * group;
