@@ -78,13 +78,13 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.0";
+        Description = "DeepLens v0.6.1";
     }
 
     public override void OnLoad()
     {
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.0 - waiting";
+        label.Text = "DeepLens v0.6.1 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -152,7 +152,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.0 - parameter inspector";
+            label.Text = "DeepLens v0.6.1 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -293,20 +293,20 @@ public class DeepLensProbe : Indicator
             + $"FootType={footType} ShowStyle={showStyle} InputData={inputData}\n"
             + $"AutoGrouping={autoGrouping} ManualTicks={manualTicks} GroupMode={groupMode}\n"
             + $"FilterMin={filterMin} FilterMax={filterMax} Proportion={proportion}\n"
-            + "DELTA comparison preview (not verified native mapping)";
+            + "DELTA / PROFILE source | numeric comparison only";
         // Comparison only: user-selected source is Delta / Volume / Manual / Fixed.
         // Do not render filtered or non-volume data as if it were verified.
-        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || inputData != 0 || autoGrouping != 0 || groupMode != 0 || filterMin != 0 || filterMax != 0)
+        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.0 - unsupported/unverified source";
+            label.Text = "DeepLens v0.6.1 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.0 - waiting for bars";
+            label.Text = "DeepLens v0.6.1 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -358,7 +358,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.0 - no VBP levels";
+            label.Text = "DeepLens v0.6.1 - no VBP levels";
             return;
         }
 
@@ -373,7 +373,7 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.0 | DELTA TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.1 | DELTA TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
 
