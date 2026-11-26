@@ -156,7 +156,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.13";
+        Description = "DeepLens v0.6.14";
     }
 
     public override void OnLoad()
@@ -165,7 +165,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.13 - waiting";
+        label.Text = "DeepLens v0.6.14 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -195,8 +195,6 @@ public class DeepLensProbe : Indicator
                 bidLabels[c,k].LineWidth = askLabels[c,k].LineWidth = 1;
                 bidLabels[c,k].FontBold = true;
                 askLabels[c,k].FontBold = false;
-                askLabels[c,k].TextOnlyInside = false;
-                askLabels[c,k].CheckStringWidthInside = false;
                 bidLabels[c,k].Visible = askLabels[c,k].Visible = false;
             }
         }
@@ -242,7 +240,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.13 - parameter inspector";
+            label.Text = "DeepLens v0.6.14 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -394,14 +392,14 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.13 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.14 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.13 - waiting for bars";
+            label.Text = "DeepLens v0.6.14 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -455,7 +453,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.13 - no VBP levels";
+            label.Text = "DeepLens v0.6.14 - no VBP levels";
             return;
         }
 
@@ -470,7 +468,7 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.13 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.14 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
 
