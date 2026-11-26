@@ -58,6 +58,8 @@ public class DeepLensProbe : Indicator
     private readonly IAnnotation[] headers = new IAnnotation[Columns];
     private readonly IAnnotation[] footers = new IAnnotation[Columns];
     private IAnnotation footer;
+    private readonly IAnnotation[] candleWicks = new IAnnotation[Columns];
+    private readonly IAnnotation[] candleBodies = new IAnnotation[Columns];
 
     private IAnnotation MakeText(double x, double y, int size)
     {
@@ -73,17 +75,28 @@ public class DeepLensProbe : Indicator
         return a;
     }
 
+    private IAnnotation MakeCandleLine()
+    {
+        var a = VAn.CreateAnnotation(AnnotationType.Line);
+        a.CoordinateXType = CoordinateTypeEnum.Relative;
+        a.CoordinateYType = CoordinateTypeEnum.Relative;
+        a.PlotForeground = true;
+        a.Visible = false;
+        VAn.AddAnnotation(IndVars.FrontAnnList, a);
+        return a;
+    }
+
     public override void OnSet(bool setDefault, bool themeOverride)
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.3";
+        Description = "DeepLens v0.6.4";
     }
 
     public override void OnLoad()
     {
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.3 - waiting";
+        label.Text = "DeepLens v0.6.4 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -100,6 +113,8 @@ public class DeepLensProbe : Indicator
         }
         for (int c = 0; c < Columns; c++)
         {
+            candleWicks[c] = MakeCandleLine();
+            candleBodies[c] = MakeCandleLine();
             headers[c] = MakeText(.10, .09, 10);
             footers[c] = MakeText(.10, .85, 10);
             for (int k = 0; k < MaxRows; k++)
@@ -122,6 +137,7 @@ public class DeepLensProbe : Indicator
         }
         for (int c = 0; c < Columns; c++)
         {
+            candleWicks[c].Visible = candleBodies[c].Visible = false;
             headers[c].Text = "";
             footers[c].Text = "";
         }
@@ -145,7 +161,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.3 - parameter inspector";
+            label.Text = "DeepLens v0.6.4 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -221,6 +237,7 @@ public class DeepLensProbe : Indicator
         bool showZero = true, enablePoc = true;
         float sourceFont = 10;
         int opacity = 70;
+        int markerWidth = 2, outsideStyle = -1, markerAlignment = -1;
         int footType = -1, showStyle = -1, inputData = -1, autoGrouping = -1, manualTicks = 0, groupMode = -1, filterMin = -1, filterMax = -1, proportion = -1;
         float borderWidth = 1, pocWidth = 1;
         ColorRef bidColor = ColorRef.FromRgb(150, 40, 55);
@@ -248,6 +265,9 @@ public class DeepLensProbe : Indicator
                 if (int.TryParse(raw, out int iv))
                 {
                     if (prop.Name == "FootType") footType = iv;
+                    if (prop.Name == "BarMarkerWidth") markerWidth = iv;
+                    if (prop.Name == "OutsideBarStyle") outsideStyle = iv;
+                    if (prop.Name == "MarkerAlignment") markerAlignment = iv;
                     if (prop.Name == "ShowStyle") showStyle = iv;
                     if (prop.Name == "InputData") inputData = iv;
                     if (prop.Name == "AutoGrouping") autoGrouping = iv;
@@ -292,14 +312,14 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.3 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.4 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.3 - waiting for bars";
+            label.Text = "DeepLens v0.6.4 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -351,7 +371,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.3 - no VBP levels";
+            label.Text = "DeepLens v0.6.4 - no VBP levels";
             return;
         }
 
@@ -366,7 +386,7 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.3 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.4 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
 
@@ -384,6 +404,32 @@ public class DeepLensProbe : Indicator
             headers[c].Text = $"{bar.dt:HH:mm} " + (c == Columns - 1 ? "LIVE" : "");
             footers[c].Text = has[c] ? $"V {vol[c]}\nD {delta[c]}" : "No VBP";
             if (!has[c]) continue;
+            // Experimental OHLC line rendering on the same grouped-price axis.
+            // A thick line represents the body; the thin line represents the wick.
+            if (outsideStyle == 1 && markerAlignment == 0)
+            {
+                double candleX = x - .009 * zoom;
+                double yHigh = .14 + ((top - (double)bar.HighInT) / group) * step;
+                double yLow = .14 + ((top - (double)bar.LowInT) / group) * step;
+                double yOpen = .14 + ((top - (double)bar.OpenInT) / group) * step;
+                double yClose = .14 + ((top - (double)bar.CloseInT) / group) * step;
+                double yMin = .14, yMax = .14 + visibleRows * step;
+                var wick = candleWicks[c];
+                var body = candleBodies[c];
+                ColorRef candleColor = ColorRef.FromRgb(155, 160, 180);
+                wick.X = wick.X2 = candleX;
+                wick.Y = Math.Max(yMin, Math.Min(yMax, yHigh));
+                wick.Y2 = Math.Max(yMin, Math.Min(yMax, yLow));
+                wick.LineColor = candleColor;
+                wick.LineWidth = 1;
+                wick.Visible = yLow >= yMin && yHigh <= yMax;
+                body.X = body.X2 = candleX;
+                body.Y = Math.Max(yMin, Math.Min(yMax, Math.Min(yOpen, yClose)));
+                body.Y2 = Math.Max(yMin, Math.Min(yMax, Math.Max(yOpen, yClose)));
+                body.LineColor = candleColor;
+                body.LineWidth = Math.Max(2, Math.Min(12, markerWidth * 2));
+                body.Visible = Math.Max(yOpen, yClose) >= yMin && Math.Min(yOpen, yClose) <= yMax;
+            }
             long[] bids = new long[MaxRows];
             long[] asks = new long[MaxRows];
             long[] totals = new long[MaxRows];
