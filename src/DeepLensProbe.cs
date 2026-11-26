@@ -42,6 +42,16 @@ public class DeepLensProbe : Indicator
     [DisplayName("Show all parameters")]
     public bool ShowAllParameters { get; set; } = true;
 
+    [Category("Deep Print diagnostic")]
+    [DisplayName("Expanded parameter index (-1 = overview)")]
+    [VolCustom(MinValue = -1, MaxValue = 200, IncrementValue = 1)]
+    public int ExpandedParameter { get; set; } = -1;
+
+    [Category("Deep Print diagnostic")]
+    [DisplayName("Expanded page")]
+    [VolCustom(MinValue = 0, MaxValue = 100, IncrementValue = 1)]
+    public int ExpandedPage { get; set; } = 0;
+
     private IAnnotation settingsStatus;
     private readonly IAnnotation[] parameterColumns = new IAnnotation[3];
     private const int Columns = 3;
@@ -72,13 +82,13 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.4.5";
+        Description = "DeepLens v0.4.6";
     }
 
     public override void OnLoad()
     {
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.4.5 - waiting";
+        label.Text = "DeepLens v0.4.6 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -135,7 +145,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.4.5 - parameter inspector";
+            label.Text = "DeepLens v0.4.6 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -144,6 +154,41 @@ public class DeepLensProbe : Indicator
             settingsStatus.Text = parameters == null
                 ? $"Index {InspectIndex}: not found"
                 : $"Index {InspectIndex}: {parameters.name} | XML: {count}";
+            if (props != null && ExpandedParameter >= 0 && ExpandedParameter < count)
+            {
+                var prop = props[ExpandedParameter];
+                string raw = prop.Value == null ? "null" : prop.Value.ToString();
+                if (raw == null) raw = "null";
+                raw = raw.Replace("\r", "");
+                string[] parts = raw.Split('\n');
+                var compactLines = new List<string>();
+                foreach (string part in parts)
+                {
+                    string line = part.Trim();
+                    if (line.Length == 0) continue;
+                    while (line.Length > 42)
+                    {
+                        compactLines.Add(line.Substring(0, 42));
+                        line = line.Substring(42);
+                    }
+                    if (line.Length > 0) compactLines.Add(line);
+                }
+                int page = Math.Max(0, ExpandedPage);
+                int pageCount = Math.Max(1, (compactLines.Count + 71) / 72);
+                page = Math.Min(page, pageCount - 1);
+                settingsStatus.Text = $"{prop.Name} [{ExpandedParameter}] | page {page + 1}/{pageCount}";
+                for (int col = 0; col < 3; col++)
+                {
+                    string lines = "";
+                    int first = page * 72 + col * 24;
+                    int last = Math.Min(compactLines.Count, first + 24);
+                    for (int j = first; j < last; j++)
+                        lines += compactLines[j] + "\n";
+                    parameterColumns[col].Text = lines;
+                    parameterColumns[col].Visible = first < last;
+                }
+                return;
+            }
             int perColumn = (count + 2) / 3;
             for (int col = 0; col < 3; col++)
             {
@@ -154,6 +199,10 @@ public class DeepLensProbe : Indicator
                 {
                     var prop = props[s];
                     string value = prop.Value == null ? "null" : prop.Value.ToString();
+                    if (value == null) value = "null";
+                    value = value.Replace("\r", "").Replace("\n", " ");
+                    if (value.Length > 28)
+                        value = value.Substring(0, 25) + "...";
                     lines += $"{s}: {prop.Name} = {value}\n";
                 }
                 parameterColumns[col].Text = lines;
@@ -168,7 +217,7 @@ public class DeepLensProbe : Indicator
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.4.5 - waiting for bars";
+            label.Text = "DeepLens v0.4.6 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -220,7 +269,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.4.5 - no VBP levels";
+            label.Text = "DeepLens v0.4.6 - no VBP levels";
             return;
         }
 
@@ -231,7 +280,7 @@ public class DeepLensProbe : Indicator
         int top = AutoFit ? high : Math.Min(high, Math.Max(low + rows - 1, focus + DetailOffset + rows / 2));
         int visibleRows = Math.Min(rows, (top - low + group) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.4.5 | {(AutoFit ? "AUTO FIT" : "DETAIL")} | {group} tick/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.4.6 | {(AutoFit ? "AUTO FIT" : "DETAIL")} | {group} tick/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         for (int k = 0; k < visibleRows; k++)
         {
