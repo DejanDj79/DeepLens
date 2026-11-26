@@ -156,7 +156,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.12";
+        Description = "DeepLens v0.6.13";
     }
 
     public override void OnLoad()
@@ -165,7 +165,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.12 - waiting";
+        label.Text = "DeepLens v0.6.13 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -193,7 +193,10 @@ public class DeepLensProbe : Indicator
                 bidLabels[c,k] = MakeText(.10, .14, 10);
                 askLabels[c,k] = MakeText(.10, .14, 10);
                 bidLabels[c,k].LineWidth = askLabels[c,k].LineWidth = 1;
-                bidLabels[c,k].FontBold = askLabels[c,k].FontBold = true;
+                bidLabels[c,k].FontBold = true;
+                askLabels[c,k].FontBold = false;
+                askLabels[c,k].TextOnlyInside = false;
+                askLabels[c,k].CheckStringWidthInside = false;
                 bidLabels[c,k].Visible = askLabels[c,k].Visible = false;
             }
         }
@@ -239,7 +242,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.12 - parameter inspector";
+            label.Text = "DeepLens v0.6.13 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -391,14 +394,14 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.12 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.13 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.12 - waiting for bars";
+            label.Text = "DeepLens v0.6.13 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -452,7 +455,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.12 - no VBP levels";
+            label.Text = "DeepLens v0.6.13 - no VBP levels";
             return;
         }
 
@@ -467,7 +470,7 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.12 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.13 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
 
@@ -579,7 +582,8 @@ public class DeepLensProbe : Indicator
                 b.X = x;
                 a.X = x + askOffset;
                 b.Y = a.Y = .14 + k * step;
-                b.FontSize = a.FontSize = font;
+                b.FontSize = font;
+                a.FontSize = Math.Min(25, font + 1);
                 int red = (int)(120.0 * bids[k] / scale);
                 int green = (int)(120.0 * asks[k] / scale);
                 if (inherited)
@@ -599,7 +603,7 @@ public class DeepLensProbe : Indicator
                 b.LineColor = a.LineColor = isPoc ? pocColor : ColorRef.FromRgb(65,75,85);
                 b.LineWidth = a.LineWidth = isPoc ? pocWidth : borderWidth;
                 long d = asks[k] - bids[k];
-                int blocks = d == 0 ? 0 : Math.Max(1, (int)Math.Round(9.0 * Math.Abs(d) / deltaScale));
+                int blocks = d == 0 ? 0 : Math.Max(1, (int)Math.Round(7.0 * Math.Abs(d) / deltaScale));
                 ColorRef profileColor = (d < 0 ? bidColor : askColor).WithOpacity((byte)(255 * Math.Max(0, Math.Min(100, opacity)) / 100));
                 b.Text = blocks == 0 ? "" : new string('█', blocks);
                 b.ForeColor = profileColor;
@@ -610,7 +614,7 @@ public class DeepLensProbe : Indicator
                 if (NativeShapes && d != 0)
                 {
                     var rect = profileRects[c,k];
-                    projected.Add((rect, x, x + .085 * zoom * Math.Abs(d) / deltaScale,
+                    projected.Add((rect, x, x + .065 * zoom * Math.Abs(d) / deltaScale,
                         .14 + (k - .5) * step, .14 + (k + .5) * step, 0, 0, false));
                     rect.BackColor = profileColor;
                     rect.LineColor = isPoc ? pocColor : profileColor;
