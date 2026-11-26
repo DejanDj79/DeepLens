@@ -37,7 +37,7 @@ public class DeepLensProbe : Indicator
         label.FontSize = 16;
         label.FontBold = true;
         label.ForeColor = ColorRef.FromRgb(230, 235, 240);
-        label.Text = "DeepLens v0.2.2 - waiting for VBP data";
+        label.Text = "DeepLens v0.2.3 - waiting for VBP data";
         VAn.AddAnnotation(IndVars.FrontAnnList, label);
     }
 
@@ -47,16 +47,28 @@ public class DeepLensProbe : Indicator
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
-            label.Text = "DeepLens v0.2.2 - waiting for bars";
+            label.Text = "DeepLens v0.2.3 - waiting for bars";
             return;
         }
         int index = VAn.BarIndex;
         if (index < 0 || index >= bars.Count)
         {
-            label.Text = "DeepLens v0.2.2 - invalid bar index";
+            label.Text = "DeepLens v0.2.3 - invalid bar index";
             return;
         }
         var bar = bars[index];
-        label.Text = $"DeepLens v0.2.2 | Bars: {bars.Count} | Index: {index} | VBP: {(bar.VbpListAll == null ? "NULL" : "AVAILABLE")}";
+        if (bar.VbpListAll == null)
+        {
+            label.Text = "DeepLens v0.2.3 - VBP NULL";
+            return;
+        }
+        int count = 0;
+        foreach (var entries in bar.VbpListAll.SortedLHValues)
+        {
+            if (entries == null || entries.Length == 0 || entries[0] == null)
+                continue;
+            count++;
+        }
+        label.Text = $"DeepLens v0.2.3 | Index: {index} | Levels (slot 0): {count}";
     }
 }
