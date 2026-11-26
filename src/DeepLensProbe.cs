@@ -186,13 +186,24 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.20";
+        Description = "DeepLens v0.6.21";
     }
 
     public override void OnLoad()
     {
         projected.Clear();
         projectedLabels.Clear();
+        // Deepchart rebuilds the annotation groups when settings change.
+        // Do not reuse annotations belonging to the previous load.
+        for (int c = 0; c < Columns; c++)
+        {
+            for (int k = 0; k < MaxRows; k++)
+            {
+                profileRects[c,k] = null;
+                bidLabels[c,k] = null;
+                askLabels[c,k] = null;
+            }
+        }
         resolvedSourceIndex = -1;
         lastRequestedIndex = -1;
         // Register first in the same foreground annotation group as the native shapes.
@@ -205,7 +216,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.20 - waiting";
+        label.Text = "DeepLens v0.6.21 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -367,7 +378,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.20 - parameter inspector";
+            label.Text = "DeepLens v0.6.21 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -534,7 +545,7 @@ public class DeepLensProbe : Indicator
         {
             ClearRows();
             label.Visible = true;
-            label.Text = "DeepLens v0.6.20 - waiting for bars";
+            label.Text = "DeepLens v0.6.21 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -621,7 +632,7 @@ public class DeepLensProbe : Indicator
         int labelStride = Math.Max(1, (int)Math.Ceiling((font + 1.0) / (preferredFont + 1.0) * preferredStep / step));
         bool profileLimited = false;
         ClearRows();
-        label.Text = $"DeepLens v0.6.20 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.21 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
 
@@ -712,6 +723,7 @@ public class DeepLensProbe : Indicator
             int sampleStride = Math.Max(1, (int)Math.Ceiling(levels.Count / (double)MaxRows));
             profileLimited |= sampleStride > 1;
             int occupied = 0, slot = 0;
+            int lastLabelRow = int.MinValue;
             foreach (var entry in levels)
             {
                 if (occupied++ % sampleStride != 0 || slot >= MaxRows) continue;
@@ -764,14 +776,20 @@ public class DeepLensProbe : Indicator
                 }
                 a.CoordinateXType = a.CoordinateYType = CoordinateTypeEnum.Relative;
                 a.X = x;
-                if (NativeShapes)
-                    projectedLabels.Add((a, x, rowOrigin + (k - .35) * step));
+                bool showLabel = (showZero || d != 0) &&
+                    (lastLabelRow == int.MinValue || (long)k - lastLabelRow >= labelStride);
+                if (showLabel)
+                {
+                    lastLabelRow = k;
+                    if (NativeShapes)
+                        projectedLabels.Add((a, x, rowOrigin + (k - .35) * step));
+                }
                 a.Text = !showZero && d == 0 ? "" : $"{d}";
                 a.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 a.ForeColor = d < 0 ? bidText : askText;
                 a.LineColor = isPoc && !NativeShapes ? pocColor : ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 a.LineWidth = isPoc && !NativeShapes ? pocWidth : 0;
-                a.Visible = (showZero || d != 0) && (labelStride == 1 || k % labelStride == 0);
+                a.Visible = showLabel;
             }
         }
         if (profileLimited)
