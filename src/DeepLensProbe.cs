@@ -62,12 +62,13 @@ public class DeepLensProbe : Indicator
     private readonly IAnnotation[] parameterColumns = new IAnnotation[3];
     private const int Columns = 3;
     private const int MaxRows = 40;
+    [Category("Deep Print diagnostic")]
+    [DisplayName("Show diagnostics")]
+    public bool ShowDiagnostics { get; set; } = false;
+
     private IAnnotation label;
     private readonly IAnnotation[,] bidLabels = new IAnnotation[Columns, MaxRows];
     private readonly IAnnotation[,] askLabels = new IAnnotation[Columns, MaxRows];
-    private readonly IAnnotation[] headers = new IAnnotation[Columns];
-    private readonly IAnnotation[] footers = new IAnnotation[Columns];
-    private IAnnotation footer;
     private readonly IAnnotation[] candleMarkers = new IAnnotation[Columns];
 
     private IAnnotation MakeText(double x, double y, int size)
@@ -156,7 +157,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.14";
+        Description = "DeepLens v0.6.15";
     }
 
     public override void OnLoad()
@@ -165,13 +166,15 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.14 - waiting";
-        footer = MakeText(.09, .91, 10);
+        label.Text = "DeepLens v0.6.15 - waiting";
+        label.Visible = ShowDiagnostics || ShowAllParameters;
+        projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
         settingsStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         settingsStatus.LineColor = ColorRef.FromRgb(95, 105, 120);
         settingsStatus.LineWidth = 1;
+        settingsStatus.Visible = ShowDiagnostics || ShowAllParameters;
         for (int i = 0; i < 3; i++)
         {
             parameterColumns[i] = MakeText(.09 + i * .29, .11, 11);
@@ -185,8 +188,6 @@ public class DeepLensProbe : Indicator
             nativeCandles[c] = MakeShape(AnnotationType.Candlestick);
             candleMarkers[c] = MakeText(.10, .14, 10);
             candleMarkers[c].Visible = false;
-            headers[c] = MakeText(.10, .09, 10);
-            footers[c] = MakeText(.10, .85, 10);
             for (int k = 0; k < MaxRows; k++)
             {
                 profileRects[c,k] = MakeShape(AnnotationType.Rectangle);
@@ -214,10 +215,7 @@ public class DeepLensProbe : Indicator
         {
             candleMarkers[c].Visible = false;
             nativeCandles[c].Visible = false;
-            headers[c].Text = "";
-            footers[c].Text = "";
         }
-        footer.Text = "";
         projected.Clear();
         projectedLabels.Clear();
     }
@@ -236,11 +234,12 @@ public class DeepLensProbe : Indicator
     public override void OnEnd(bool isRt)
     {
         if (label == null) return;
-        projectionStatus.Visible = !ShowAllParameters && NativeShapes;
+        label.Visible = ShowDiagnostics || ShowAllParameters;
+        projectionStatus.Visible = ShowDiagnostics && !ShowAllParameters && NativeShapes;
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.14 - parameter inspector";
+            label.Text = "DeepLens v0.6.15 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -380,7 +379,7 @@ public class DeepLensProbe : Indicator
                 }
             }
         }
-        settingsStatus.Visible = true;
+        settingsStatus.Visible = ShowDiagnostics;
         settingsStatus.Text = $"Index {InspectIndex}: {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
             + $"FootType={footType} ShowStyle={showStyle} InputData={inputData}\n"
             + $"AutoGrouping={autoGrouping} ManualTicks={manualTicks} GroupMode={groupMode}\n"
@@ -392,14 +391,14 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.14 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.15 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.14 - waiting for bars";
+            label.Text = "DeepLens v0.6.15 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -418,8 +417,6 @@ public class DeepLensProbe : Indicator
         int latestLow = int.MaxValue, latestHigh = int.MinValue;
         int[] poc = new int[Columns];
         int[] maxVol = new int[Columns];
-        long[] vol = new long[Columns];
-        long[] delta = new long[Columns];
         bool[] has = new bool[Columns];
 
         for (int c = 0; c < Columns; c++)
@@ -439,8 +436,6 @@ public class DeepLensProbe : Indicator
                     latestLow = Math.Min(latestLow, level.PinT);
                     latestHigh = Math.Max(latestHigh, level.PinT);
                 }
-                vol[c] += level.TotVol;
-                delta[c] += (long)level.AskVol - level.BidVol;
                 if (!has[c] || level.TotVol > maxVol[c])
                 {
                     maxVol[c] = level.TotVol;
@@ -453,7 +448,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.14 - no VBP levels";
+            label.Text = "DeepLens v0.6.15 - no VBP levels";
             return;
         }
 
@@ -468,31 +463,16 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.14 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.15 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
-        settingsStatus.Visible = true;
+        settingsStatus.Visible = ShowDiagnostics;
 
         for (int c = 0; c < Columns; c++)
         {
             int index = end - Columns + 1 + c;
             double x = left + c * stride;
-            headers[c].CoordinateXType = headers[c].CoordinateYType = CoordinateTypeEnum.Relative;
-            footers[c].CoordinateXType = footers[c].CoordinateYType = CoordinateTypeEnum.Relative;
-            headers[c].X = x;
-            headers[c].Y = .09;
-            footers[c].Y = .85;
-            headers[c].FontSize = font;
-            footers[c].X = x;
-            footers[c].FontSize = font;
             if (index < 0) continue;
             var bar = bars[index];
-            headers[c].Text = $"{bar.dt:HH:mm} " + (c == Columns - 1 ? "LIVE" : "");
-            footers[c].Text = has[c] ? $"V {vol[c]}\nD {delta[c]}" : "No VBP";
-            if (NativeShapes)
-            {
-                projectedLabels.Add((headers[c], x, .09));
-                projectedLabels.Add((footers[c], x, .85));
-            }
             if (!has[c]) continue;
             // Text-based candle preview: each row corresponds to an inherited price bucket.
             // Body and wick are quantized to that grid, not exact sub-row geometry.
@@ -632,6 +612,5 @@ public class DeepLensProbe : Indicator
             }
         }
         if (NativeShapes) ProjectShapes();
-        footer.Text = $"Fixed-grid comparison | {visibleRows} rows | offset {DetailOffset} ticks";
     }
 }
