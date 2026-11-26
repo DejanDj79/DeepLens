@@ -58,6 +58,26 @@ public class DeepLensProbe : Indicator
     [DisplayName("Show panel background")]
     public bool ShowPanelBackground { get; set; } = true;
 
+    [Category("Layout")]
+    [DisplayName("Panel X (%)")]
+    [VolCustom(MinValue = 0, MaxValue = 99, IncrementValue = 1)]
+    public int PanelX { get; set; } = 8;
+
+    [Category("Layout")]
+    [DisplayName("Panel Y (%)")]
+    [VolCustom(MinValue = 0, MaxValue = 99, IncrementValue = 1)]
+    public int PanelY { get; set; } = 12;
+
+    [Category("Layout")]
+    [DisplayName("Panel width (%)")]
+    [VolCustom(MinValue = 18, MaxValue = 95, IncrementValue = 1)]
+    public int PanelWidth { get; set; } = 28;
+
+    [Category("Layout")]
+    [DisplayName("Panel height (%)")]
+    [VolCustom(MinValue = 20, MaxValue = 95, IncrementValue = 1)]
+    public int PanelHeight { get; set; } = 70;
+
     private IAnnotation panelBackground;
     private IAnnotation settingsStatus;
     private IAnnotation projectionStatus;
@@ -162,7 +182,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.16";
+        Description = "DeepLens v0.6.17";
     }
 
     public override void OnLoad()
@@ -177,7 +197,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.16 - waiting";
+        label.Text = "DeepLens v0.6.17 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -251,7 +271,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.16 - parameter inspector";
+            label.Text = "DeepLens v0.6.17 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -403,14 +423,14 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.16 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.17 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.16 - waiting for bars";
+            label.Text = "DeepLens v0.6.17 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -419,13 +439,21 @@ public class DeepLensProbe : Indicator
         // Compact baseline: keep the user zoom control and scale all profile geometry together.
         const double compactScale = .75;
         double zoom = compactScale * Math.Max(60, Math.Min(180, Zoom)) / 100.0;
+        double panelWidth = Math.Clamp(PanelWidth, 18, 95) / 100.0;
+        double panelHeight = Math.Clamp(PanelHeight, 20, 95) / 100.0;
+        double panelLeft = Math.Clamp(PanelX / 100.0, 0, 1 - panelWidth);
+        double panelTop = Math.Clamp(PanelY / 100.0, 0, 1 - panelHeight);
+        const double paddingY = .012;
         double step = .027 * zoom;
-        int rows = Math.Min(MaxRows, Math.Max(1, (int)(.68 / step)));
+        int rows = Math.Min(MaxRows, Math.Max(1, (int)Math.Floor((panelHeight - 2 * paddingY) / step)));
         int font = Math.Max(6, Math.Min(24, (int)Math.Round(sourceFont * zoom)));
-        double stride = .13 * zoom;
-        double profileWidth = .05 * zoom;
-        double askOffset = .036 * zoom;
-        double left = .10;
+        // Fit three columns and their label allowance inside the chosen width.
+        double horizontalZoom = Math.Min(zoom, panelWidth / (.028 + (Columns - 1) * .13 + .05 + .035));
+        double stride = .13 * horizontalZoom;
+        double profileWidth = .05 * horizontalZoom;
+        double askOffset = .036 * horizontalZoom;
+        double left = panelLeft + .028 * horizontalZoom;
+        double rowOrigin = panelTop + paddingY + step * .5;
         int high = int.MinValue, low = int.MaxValue;
         int latestLow = int.MaxValue, latestHigh = int.MinValue;
         int[] poc = new int[Columns];
@@ -461,7 +489,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.16 - no VBP levels";
+            label.Text = "DeepLens v0.6.17 - no VBP levels";
             return;
         }
 
@@ -476,19 +504,14 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.16 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.17 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
 
         if (NativeShapes && ShowPanelBackground)
         {
-            // Fixed panel bounds in the overlay coordinate system, including space for
-            // labels that extend past short profiles. The panel does not affect chart axes.
-            double panelLeft = left - .028 * zoom;
-            double panelRight = Math.Min(.98, left + (Columns - 1) * stride + profileWidth + .035 * zoom);
-            double panelTop = .14 - step * .5 - .012;
-            double panelBottom = .14 + (rows - .5) * step + .012;
-            projected.Add((panelBackground, panelLeft, panelRight, panelTop, panelBottom, 0, 0, false));
+            projected.Add((panelBackground, panelLeft, panelLeft + panelWidth,
+                panelTop, panelTop + panelHeight, 0, 0, false));
         }
 
         for (int c = 0; c < Columns; c++)
@@ -506,16 +529,16 @@ public class DeepLensProbe : Indicator
             if (NativeShapes && outsideStyle == 1 && markerAlignment == 0 && candleHigh >= candleLow)
             {
                 // Official native candle layout, projected onto the independent relative Y grid.
-                double yOpen = .14 + (top - (double)candleOpen) * step / group;
-                double yClose = .14 + (top - (double)candleClose) * step / group;
-                double yHigh = .14 + (top - (double)candleHigh) * step / group;
-                double yLow = .14 + (top - (double)candleLow) * step / group;
-                double yMin = .14 - step / 2, yMax = .14 + (visibleRows - .5) * step;
+                double yOpen = rowOrigin + (top - (double)candleOpen) * step / group;
+                double yClose = rowOrigin + (top - (double)candleClose) * step / group;
+                double yHigh = rowOrigin + (top - (double)candleHigh) * step / group;
+                double yLow = rowOrigin + (top - (double)candleLow) * step / group;
+                double yMin = rowOrigin - step / 2, yMax = rowOrigin + (visibleRows - .5) * step;
                 if (yLow >= yMin && yHigh <= yMax)
                 {
                     var candle = nativeCandles[c];
-                    double halfWidth = Math.Max(.0015, Math.Min(.005, markerWidth * .0015)) * zoom * .75;
-                    projected.Add((candle, x - .007 * zoom - halfWidth, x - .007 * zoom + halfWidth,
+                    double halfWidth = Math.Max(.0015, Math.Min(.005, markerWidth * .0015)) * horizontalZoom * .75;
+                    projected.Add((candle, x - .007 * horizontalZoom - halfWidth, x - .007 * horizontalZoom + halfWidth,
                         Math.Clamp(yOpen, yMin, yMax), Math.Clamp(yLow, yMin, yMax),
                         Math.Clamp(yHigh, yMin, yMax), Math.Clamp(yClose, yMin, yMax), true));
                     candle.BackColor = ColorRef.FromRgb(120, 125, 145);
@@ -541,8 +564,8 @@ public class DeepLensProbe : Indicator
                 if (firstRow >= 0)
                 {
                     var mark = candleMarkers[c];
-                    mark.X = x - .012 * zoom;
-                    mark.Y = .14 + firstRow * step;
+                    mark.X = x - .012 * horizontalZoom;
+                    mark.Y = rowOrigin + firstRow * step;
                     mark.FontSize = font;
                     mark.Text = marker;
                     mark.ForeColor = ColorRef.FromRgb(165, 170, 190);
@@ -583,7 +606,7 @@ public class DeepLensProbe : Indicator
                 var a = askLabels[c,k];
                 b.X = x;
                 a.X = x + askOffset;
-                b.Y = a.Y = .14 + k * step;
+                b.Y = a.Y = rowOrigin + k * step;
                 b.FontSize = font;
                 a.FontSize = Math.Min(25, font + 1);
                 int red = (int)(120.0 * bids[k] / scale);
@@ -617,7 +640,7 @@ public class DeepLensProbe : Indicator
                 {
                     var rect = profileRects[c,k];
                     projected.Add((rect, x, x + profileWidth * Math.Abs(d) / deltaScale,
-                        .14 + (k - .5) * step, .14 + (k + .5) * step, 0, 0, false));
+                        rowOrigin + (k - .5) * step, rowOrigin + (k + .5) * step, 0, 0, false));
                     rect.BackColor = profileColor;
                     rect.LineColor = isPoc ? pocColor : profileColor;
                     rect.LineWidth = isPoc ? pocWidth : 0;
@@ -626,7 +649,7 @@ public class DeepLensProbe : Indicator
                 a.CoordinateXType = a.CoordinateYType = CoordinateTypeEnum.Relative;
                 a.X = x;
                 if (NativeShapes)
-                    projectedLabels.Add((a, x, .14 + (k - .35) * step));
+                    projectedLabels.Add((a, x, rowOrigin + (k - .35) * step));
                 a.Text = !showZero && d == 0 ? "" : $"{d}";
                 a.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 a.ForeColor = d < 0 ? bidText : askText;
