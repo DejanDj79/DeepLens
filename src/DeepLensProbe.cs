@@ -37,41 +37,26 @@ public class DeepLensProbe : Indicator
         label.FontSize = 16;
         label.FontBold = true;
         label.ForeColor = ColorRef.FromRgb(230, 235, 240);
-        label.Text = "DeepLens v0.2.1 - waiting for VBP data";
+        label.Text = "DeepLens v0.2.2 - waiting for VBP data";
         VAn.AddAnnotation(IndVars.FrontAnnList, label);
     }
 
     public override void OnEnd(bool isRt)
     {
         if (label == null) return;
-        try
+        var bars = VAn.BarVars;
+        if (bars == null || bars.Count == 0)
         {
-            var bars = VAn.BarVars;
-            if (bars == null || bars.Count == 0)
-            {
-                label.Text = "DeepLens v0.2.1 - waiting for bars";
-                return;
-            }
-            int end = Math.Min(VAn.BarIndex, bars.Count - 1);
-            var lines = new List<string> { "DEEPLENS v0.2.1 - VBP TEST", $"Bars: {bars.Count} | Index: {end}" };
-            for (int i = Math.Max(0, end - 2); i <= end; i++)
-            {
-                var bar = bars[i];
-                var levels = bar.VbpListAll?.SortedLHValues
-                    .Where(a => a != null && a.Length > 0 && a[0] != null)
-                    .Select(a => a[0]).ToList();
-                lines.Add($"{bar.dt:HH:mm:ss} | Levels: {levels?.Count ?? 0}");
-                if (levels != null && levels.Count > 0)
-                {
-                    var level = levels.OrderByDescending(l => l.TotVol).First();
-                    lines.Add($"Tick {level.PinT} | Bid {level.BidVol} x Ask {level.AskVol}");
-                }
-            }
-            label.Text = string.Join("\n", lines);
+            label.Text = "DeepLens v0.2.2 - waiting for bars";
+            return;
         }
-        catch (Exception ex)
+        int index = VAn.BarIndex;
+        if (index < 0 || index >= bars.Count)
         {
-            label.Text = "DeepLens v0.2.1 VBP error: " + ex.GetType().Name + ": " + ex.Message;
+            label.Text = "DeepLens v0.2.2 - invalid bar index";
+            return;
         }
+        var bar = bars[index];
+        label.Text = $"DeepLens v0.2.2 | Bars: {bars.Count} | Index: {index} | VBP: {(bar.VbpListAll == null ? "NULL" : "AVAILABLE")}";
     }
 }
