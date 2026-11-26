@@ -52,6 +52,8 @@ public class DeepLensProbe : Indicator
     [DisplayName("Native shapes test")]
     public bool NativeShapes { get; set; } = true;
 
+    private IAnnotation absoluteProbe;
+    private IAnnotation absoluteLabel;
     private IAnnotation settingsStatus;
     private readonly IAnnotation[,] profileRects = new IAnnotation[Columns, MaxRows];
     private readonly IAnnotation[] nativeCandles = new IAnnotation[Columns];
@@ -100,13 +102,32 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.7";
+        Description = "DeepLens v0.6.8";
     }
 
     public override void OnLoad()
     {
+        absoluteProbe = VAn.CreateAnnotation(AnnotationType.Candlestick);
+        absoluteProbe.Area = ChartAreaRef.Main;
+        absoluteProbe.CoordinateXType = CoordinateTypeEnum.Absolute;
+        absoluteProbe.CoordinateYType = CoordinateTypeEnum.Absolute;
+        absoluteProbe.UseAxisWithSpace = false;
+        absoluteProbe.LineWidth = 3;
+        absoluteProbe.BackColor = ColorRef.FromRgb(255, 170, 0);
+        absoluteProbe.LineColor = ColorRef.FromRgb(255, 255, 0);
+        absoluteProbe.Visible = false;
+        VAn.AddAnnotation(IndVars.Ann_List, absoluteProbe);
+        absoluteLabel = VAn.CreateAnnotation(AnnotationType.Text);
+        absoluteLabel.Area = ChartAreaRef.Main;
+        absoluteLabel.CoordinateXType = CoordinateTypeEnum.Absolute;
+        absoluteLabel.CoordinateYType = CoordinateTypeEnum.Absolute;
+        absoluteLabel.Text = "NATIVE OHLC TEST";
+        absoluteLabel.ForeColor = ColorRef.FromRgb(255, 255, 0);
+        absoluteLabel.FontSize = 12;
+        absoluteLabel.Visible = false;
+        VAn.AddAnnotation(IndVars.FrontAnnList, absoluteLabel);
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.7 - waiting";
+        label.Text = "DeepLens v0.6.8 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -158,6 +179,7 @@ public class DeepLensProbe : Indicator
             footers[c].Text = "";
         }
         footer.Text = "";
+        absoluteProbe.Visible = absoluteLabel.Visible = false;
     }
 
     private static string FindColor(string raw, string name)
@@ -177,7 +199,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.7 - parameter inspector";
+            label.Text = "DeepLens v0.6.8 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -329,14 +351,14 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.7 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.8 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.7 - waiting for bars";
+            label.Text = "DeepLens v0.6.8 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -388,7 +410,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.7 - no VBP levels";
+            label.Text = "DeepLens v0.6.8 - no VBP levels";
             return;
         }
 
@@ -403,10 +425,26 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.7 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.8 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
-
+        if (NativeShapes && end >= 1)
+        {
+            int probeIndex = end - 1;
+            var probeBar = bars[probeIndex];
+            absoluteProbe.X = probeIndex + .55;
+            absoluteProbe.X2 = probeIndex + 1.45;
+            absoluteProbe.Y = probeBar.Open;
+            absoluteProbe.Height = probeBar.Close - probeBar.Open;
+            absoluteProbe.Y2 = probeBar.Low;
+            absoluteProbe.Y3 = probeBar.High;
+            absoluteProbe.PlotForeground = true;
+            absoluteProbe.Visible = true;
+            absoluteLabel.X = probeIndex + 1;
+            absoluteLabel.Y = probeBar.High;
+            absoluteLabel.Visible = true;
+            settingsStatus.Text += $"\nAbsolute probe: bar {probeIndex} {probeBar.dt:HH:mm} | O {probeBar.Open} H {probeBar.High} L {probeBar.Low} C {probeBar.Close}";
+        }
 
         for (int c = 0; c < Columns; c++)
         {
@@ -537,8 +575,8 @@ public class DeepLensProbe : Indicator
                 b.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 b.LineColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 b.LineWidth = 0;
-                b.Visible = !NativeShapes && blocks > 0;
-                if (NativeShapes && d != 0)
+                b.Visible = blocks > 0;
+                if (false && NativeShapes && d != 0)
                 {
                     var rect = profileRects[c,k];
                     rect.X = x;
@@ -551,7 +589,7 @@ public class DeepLensProbe : Indicator
                     rect.Visible = true;
                 }
                 a.X = x;
-                if (NativeShapes) a.Y = .14 + (k - .5) * step;
+                
                 a.Text = !showZero && d == 0 ? "" : $"{d}";
                 a.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 a.ForeColor = d < 0 ? bidText : askText;
