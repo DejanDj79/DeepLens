@@ -184,7 +184,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.18";
+        Description = "DeepLens v0.6.19";
     }
 
     public override void OnLoad()
@@ -203,7 +203,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.18 - waiting";
+        label.Text = "DeepLens v0.6.19 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -276,6 +276,29 @@ public class DeepLensProbe : Indicator
         }
     }
 
+    // Match the supported renderer configuration rather than just the indicator name.
+    private bool IsSupportedSource(BaseIndicatorPrms source)
+    {
+        if (source == null || source.name != "Deep Print" || source.XMLPropList == null) return false;
+        int type = -1, mode = -1, input = -1, grouping = -1, groupMode = -1;
+        int ticks = 0, min = -1, max = -1, proportion = -1;
+        foreach (var prop in source.XMLPropList)
+        {
+            if (prop.Value == null || !int.TryParse(prop.Value.ToString(), out int value)) continue;
+            if (prop.Name == "FootType") type = value;
+            if (prop.Name == "ShowStyle") mode = value;
+            if (prop.Name == "InputData") input = value;
+            if (prop.Name == "AutoGrouping") grouping = value;
+            if (prop.Name == "GroupMode") groupMode = value;
+            if (prop.Name == "ManualTicks") ticks = value;
+            if (prop.Name == "FilterMin") min = value;
+            if (prop.Name == "FilterMax") max = value;
+            if (prop.Name == "FootProportion") proportion = value;
+        }
+        return type == 2 && mode == 1 && input == 0 && grouping == 1 &&
+            groupMode == 0 && ticks >= 1 && ticks <= 10000 && min == 0 && max == 0 && proportion == 0;
+    }
+
     private BaseIndicatorPrms ResolveDeepPrint()
     {
         if (lastRequestedIndex != InspectIndex)
@@ -283,36 +306,39 @@ public class DeepLensProbe : Indicator
             lastRequestedIndex = InspectIndex;
             resolvedSourceIndex = -1;
         }
-        if (resolvedSourceIndex >= 0)
-        {
-            var cached = TryGetParams(resolvedSourceIndex);
-            if (cached != null && cached.name == "Deep Print") return cached;
-            resolvedSourceIndex = -1;
-        }
-
         var requested = TryGetParams(InspectIndex);
-        if (requested != null && requested.name == "Deep Print")
+        if (IsSupportedSource(requested))
         {
             resolvedSourceIndex = InspectIndex;
             return requested;
         }
+        if (resolvedSourceIndex >= 0 && resolvedSourceIndex != InspectIndex)
+        {
+            var cached = TryGetParams(resolvedSourceIndex);
+            if (IsSupportedSource(cached)) return cached;
+        }
 
-        // A new chart may assign a different index. Prefer the explicitly requested
-        // source; otherwise locate the first Deep Print in the supported inspect range.
+        // Keep the preferred source for diagnostics if none of the instances matches.
+        BaseIndicatorPrms fallback = requested != null && requested.name == "Deep Print" ? requested : null;
+        int fallbackIndex = fallback == null ? -1 : InspectIndex;
         for (int i = 0; i <= 50; i++)
         {
             if (i == InspectIndex) continue;
             var candidate = TryGetParams(i);
-            if (candidate != null && candidate.name == "Deep Print")
+            if (candidate == null || candidate.name != "Deep Print") continue;
+            if (IsSupportedSource(candidate))
             {
                 resolvedSourceIndex = i;
                 return candidate;
             }
-            // Some builds start at index 1. Only stop after reaching a missing
-            // entry beyond that initial position.
-            if (candidate == null && i >= 2) break;
+            if (fallback == null)
+            {
+                fallback = candidate;
+                fallbackIndex = i;
+            }
         }
-        return null;
+        resolvedSourceIndex = fallbackIndex;
+        return fallback;
     }
 
     private static string FindColor(string raw, string name)
@@ -334,7 +360,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.18 - parameter inspector";
+            label.Text = "DeepLens v0.6.19 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -489,20 +515,27 @@ public class DeepLensProbe : Indicator
             label.Visible = true;
             label.Text = style == null
                 ? "DeepLens - add Deep Print to this chart"
-                : "DeepLens - select Delta / Profile / Volume / Manual / Fixed";
+                : "DeepLens - unsupported Deep Print settings (see actual / expected)";
+            settingsStatus.Visible = true;
+            settingsStatus.Text += "\nExpected: FootType=2 ShowStyle=1 InputData=0"
+                + "\nAutoGrouping=1 ManualTicks=1..10000 GroupMode=0"
+                + "\nFilterMin=0 FilterMax=0 Proportion=0 (Bar relative)";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.18 - waiting for bars";
+            label.Visible = true;
+            label.Text = "DeepLens v0.6.19 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
         if (end < 0 || end >= bars.Count)
         {
             ClearRows();
+            label.Visible = true;
+            label.Text = "DeepLens - waiting for a valid bar index";
             return;
         }
 
@@ -559,7 +592,8 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.18 - no VBP levels";
+            label.Visible = true;
+            label.Text = "DeepLens - no VBP data for the last three bars";
             return;
         }
 
@@ -574,7 +608,7 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.18 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.19 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
 
