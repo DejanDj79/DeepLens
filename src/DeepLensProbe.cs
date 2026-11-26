@@ -82,6 +82,8 @@ public class DeepLensProbe : Indicator
     private IAnnotation settingsStatus;
     private IAnnotation projectionStatus;
     private int resizeCalls;
+    private int resolvedSourceIndex = -1;
+    private int lastRequestedIndex = -1;
     private readonly IAnnotation[,] profileRects = new IAnnotation[Columns, MaxRows];
     private readonly IAnnotation[] nativeCandles = new IAnnotation[Columns];
     private readonly IAnnotation[] parameterColumns = new IAnnotation[3];
@@ -129,7 +131,7 @@ public class DeepLensProbe : Indicator
     // Map overlay positions into the visible chart axes for native shapes.
     private void ProjectShapes()
     {
-        if (projectionStatus == null) return;
+        if (projectionStatus == null || projected.Count == 0) return;
         if (AxisX == null || AxisY == null)
         {
             projectionStatus.Text = $"AxisX null: {AxisX == null} | AxisY null: {AxisY == null} | shapes {projected.Count}";
@@ -182,11 +184,15 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.17";
+        Description = "DeepLens v0.6.18";
     }
 
     public override void OnLoad()
     {
+        projected.Clear();
+        projectedLabels.Clear();
+        resolvedSourceIndex = -1;
+        lastRequestedIndex = -1;
         // Register first in the same foreground annotation group as the native shapes.
         // This puts the panel behind the candles and profiles in insertion order.
         panelBackground = MakeShape(AnnotationType.Rectangle);
@@ -197,7 +203,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.17 - waiting";
+        label.Text = "DeepLens v0.6.18 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -252,6 +258,63 @@ public class DeepLensProbe : Indicator
         projectedLabels.Clear();
     }
 
+    // GetParamsById can throw rather than return null when a chart has fewer indicators.
+    private BaseIndicatorPrms TryGetParams(int index)
+    {
+        if (index < 0) return null;
+        try
+        {
+            return VAn.GetParamsById(index);
+        }
+        catch (System.ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+        catch (System.IndexOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    private BaseIndicatorPrms ResolveDeepPrint()
+    {
+        if (lastRequestedIndex != InspectIndex)
+        {
+            lastRequestedIndex = InspectIndex;
+            resolvedSourceIndex = -1;
+        }
+        if (resolvedSourceIndex >= 0)
+        {
+            var cached = TryGetParams(resolvedSourceIndex);
+            if (cached != null && cached.name == "Deep Print") return cached;
+            resolvedSourceIndex = -1;
+        }
+
+        var requested = TryGetParams(InspectIndex);
+        if (requested != null && requested.name == "Deep Print")
+        {
+            resolvedSourceIndex = InspectIndex;
+            return requested;
+        }
+
+        // A new chart may assign a different index. Prefer the explicitly requested
+        // source; otherwise locate the first Deep Print in the supported inspect range.
+        for (int i = 0; i <= 50; i++)
+        {
+            if (i == InspectIndex) continue;
+            var candidate = TryGetParams(i);
+            if (candidate != null && candidate.name == "Deep Print")
+            {
+                resolvedSourceIndex = i;
+                return candidate;
+            }
+            // Some builds start at index 1. Only stop after reaching a missing
+            // entry beyond that initial position.
+            if (candidate == null && i >= 2) break;
+        }
+        return null;
+    }
+
     private static string FindColor(string raw, string name)
     {
         int at = raw.IndexOf("\"" + name + "\"");
@@ -271,9 +334,9 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.17 - parameter inspector";
+            label.Text = "DeepLens v0.6.18 - parameter inspector";
             label.FontSize = 12;
-            var parameters = VAn.GetParamsById(InspectIndex);
+            var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
             int count = props == null ? 0 : props.Count;
             settingsStatus.Visible = true;
@@ -339,7 +402,7 @@ public class DeepLensProbe : Indicator
         settingsStatus.Visible = false;
         for (int col = 0; col < 3; col++)
             parameterColumns[col].Visible = false;
-        var style = VAn.GetParamsById(InspectIndex);
+        var style = ResolveDeepPrint();
         bool inherited = false;
         string rawPoc = "missing", rawBid = "missing", rawAsk = "missing";
         int revision = 17;
@@ -412,7 +475,7 @@ public class DeepLensProbe : Indicator
             }
         }
         settingsStatus.Visible = ShowDiagnostics;
-        settingsStatus.Text = $"Index {InspectIndex}: {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
+        settingsStatus.Text = $"Index {resolvedSourceIndex} (requested {InspectIndex}): {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
             + $"FootType={footType} ShowStyle={showStyle} InputData={inputData}\n"
             + $"AutoGrouping={autoGrouping} ManualTicks={manualTicks} GroupMode={groupMode}\n"
             + $"FilterMin={filterMin} FilterMax={filterMax} Proportion={proportion}\n"
@@ -423,18 +486,25 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.17 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Visible = true;
+            label.Text = style == null
+                ? "DeepLens - add Deep Print to this chart"
+                : "DeepLens - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.17 - waiting for bars";
+            label.Text = "DeepLens v0.6.18 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
-        if (end < 0 || end >= bars.Count) return;
+        if (end < 0 || end >= bars.Count)
+        {
+            ClearRows();
+            return;
+        }
 
         // Compact baseline: keep the user zoom control and scale all profile geometry together.
         const double compactScale = .75;
@@ -463,9 +533,9 @@ public class DeepLensProbe : Indicator
         for (int c = 0; c < Columns; c++)
         {
             int index = end - Columns + 1 + c;
-            if (index < 0) continue;
+            if (index < 0 || index >= bars.Count) continue;
             var bar = bars[index];
-            if (bar.VbpListAll == null) continue;
+            if (bar == null || bar.VbpListAll == null) continue;
             foreach (var entries in bar.VbpListAll.SortedLHValues)
             {
                 if (entries == null || entries.Length == 0 || entries[0] == null) continue;
@@ -489,7 +559,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.17 - no VBP levels";
+            label.Text = "DeepLens v0.6.18 - no VBP levels";
             return;
         }
 
@@ -504,7 +574,7 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.17 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.18 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
 
@@ -518,9 +588,9 @@ public class DeepLensProbe : Indicator
         {
             int index = end - Columns + 1 + c;
             double x = left + c * stride;
-            if (index < 0) continue;
+            if (index < 0 || index >= bars.Count || !has[c]) continue;
             var bar = bars[index];
-            if (!has[c]) continue;
+            if (bar == null || bar.VbpListAll == null) continue;
             // Text-based candle preview: each row corresponds to an inherited price bucket.
             // Body and wick are quantized to that grid, not exact sub-row geometry.
             int candleHigh = bar.HighInT, candleLow = bar.LowInT;
@@ -587,7 +657,7 @@ public class DeepLensProbe : Indicator
                 fullDelta[bucket] = oldDelta + (long)level.AskVol - level.BidVol;
                 if (level.PinT > top || level.PinT < low) continue;
                 int k = (top - level.PinT) / group;
-                if (k >= visibleRows) continue;
+                if (k < 0 || k >= visibleRows || k >= MaxRows) continue;
                 bids[k] += level.BidVol;
                 asks[k] += level.AskVol;
                 totals[k] += level.TotVol;
