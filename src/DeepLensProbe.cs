@@ -1,5 +1,7 @@
+using System.ComponentModel;
 using VolSysAPI.Indicators;
 using VolumetricaAPI.Chart;
+using VolumetricaControls;
 using VolumetricaCore;
 using static VolSysAPI.ExternalStructure;
 
@@ -12,16 +14,24 @@ public class DeepLensProbe : Indicator
         return new IndicatorDescriptionBase
         {
             Name = "DeepLens Probe",
-            Description = "Minimal registration and overlay test.",
+            Description = "Three-bar live footprint test.",
             Tags = new List<string> { "Utility" }
         };
     }
 
+    [Category("Layout")]
+    [DisplayName("Zoom (%)")]
+    [VolCustom(MinValue = 60, MaxValue = 180, IncrementValue = 10)]
+    public int Zoom { get; set; } = 100;
+
+    private const int Columns = 3;
+    private const int MaxRows = 40;
     private IAnnotation label;
-    private const int MaxRows = 24;
-    private readonly IAnnotation[] bidLabels = new IAnnotation[MaxRows];
-    private readonly IAnnotation[] askLabels = new IAnnotation[MaxRows];
+    private readonly IAnnotation[,] bidLabels = new IAnnotation[Columns, MaxRows];
+    private readonly IAnnotation[,] askLabels = new IAnnotation[Columns, MaxRows];
     private readonly IAnnotation[] priceLabels = new IAnnotation[MaxRows];
+    private readonly IAnnotation[] headers = new IAnnotation[Columns];
+    private readonly IAnnotation[] footers = new IAnnotation[Columns];
     private IAnnotation footer;
 
     private IAnnotation MakeText(double x, double y, int size)
@@ -42,32 +52,48 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.3.4 renderer test";
+        Description = "DeepLens v0.4.0";
     }
 
     public override void OnLoad()
     {
-        label = MakeText(.09, .06, 12);
-        label.Text = "DeepLens v0.3.4 - waiting";
-        var headers = MakeText(.10, .105, 10);
-        headers.Text = "BID";
-        headers = MakeText(.172, .105, 10);
-        headers.Text = "ASK";
-        headers = MakeText(.24, .105, 10);
-        headers.Text = "PRICE";
-        for (int i = 0; i < MaxRows; i++)
+        label = MakeText(.09, .05, 12);
+        label.Text = "DeepLens v0.4.0 - waiting";
+        footer = MakeText(.09, .91, 10);
+        for (int c = 0; c < Columns; c++)
         {
-            double y = .14 + i * .028;
-            bidLabels[i] = MakeText(.10, y, 10);
-            askLabels[i] = MakeText(.172, y, 10);
-            priceLabels[i] = MakeText(.24, y, 10);
-            bidLabels[i].LineWidth = askLabels[i].LineWidth = 1;
-            bidLabels[i].FontBold = askLabels[i].FontBold = true;
-            bidLabels[i].Visible = false;
-            askLabels[i].Visible = false;
-            priceLabels[i].Visible = false;
+            headers[c] = MakeText(.10, .09, 10);
+            footers[c] = MakeText(.10, .85, 10);
+            for (int k = 0; k < MaxRows; k++)
+            {
+                bidLabels[c,k] = MakeText(.10, .14, 10);
+                askLabels[c,k] = MakeText(.10, .14, 10);
+                bidLabels[c,k].LineWidth = askLabels[c,k].LineWidth = 1;
+                bidLabels[c,k].FontBold = askLabels[c,k].FontBold = true;
+                bidLabels[c,k].Visible = askLabels[c,k].Visible = false;
+            }
         }
-        footer = MakeText(.09, .83, 11);
+        for (int k = 0; k < MaxRows; k++)
+        {
+            priceLabels[k] = MakeText(.70, .14, 10);
+            priceLabels[k].Visible = false;
+        }
+    }
+
+    private void ClearRows()
+    {
+        for (int k = 0; k < MaxRows; k++)
+        {
+            priceLabels[k].Visible = false;
+            for (int c = 0; c < Columns; c++)
+                bidLabels[c,k].Visible = askLabels[c,k].Visible = false;
+        }
+        for (int c = 0; c < Columns; c++)
+        {
+            headers[c].Text = "";
+            footers[c].Text = "";
+        }
+        footer.Text = "";
     }
 
     public override void OnEnd(bool isRt)
@@ -76,68 +102,116 @@ public class DeepLensProbe : Indicator
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
-            label.Text = "DeepLens v0.3.4 - waiting for bars";
+            ClearRows();
+            label.Text = "DeepLens v0.4.0 - waiting for bars";
             return;
         }
-        int index = VAn.BarIndex;
-        if (index < 0 || index >= bars.Count)
+        int end = VAn.BarIndex;
+        if (end < 0 || end >= bars.Count) return;
+
+        double zoom = Math.Max(60, Math.Min(180, Zoom)) / 100.0;
+        double step = .027 * zoom;
+        int rows = Math.Min(MaxRows, Math.Max(1, (int)(.68 / step)));
+        int font = Math.Max(8, (int)(10 * zoom));
+        double stride = .15 * zoom;
+        double askOffset = .065 * zoom;
+        double left = .10;
+        int high = int.MinValue, low = int.MaxValue;
+        int latestLow = int.MaxValue, latestHigh = int.MinValue;
+        int[] poc = new int[Columns];
+        int[] maxVol = new int[Columns];
+        long[] vol = new long[Columns];
+        long[] delta = new long[Columns];
+        bool[] has = new bool[Columns];
+
+        for (int c = 0; c < Columns; c++)
         {
-            label.Text = "DeepLens v0.3.4 - invalid bar index";
-            return;
-        }
-        var bar = bars[index];
-        if (bar.VbpListAll == null)
-        {
-            label.Text = "DeepLens v0.3.4 - VBP NULL";
-            return;
-        }
-        int count = 0;
-        long bid = 0, ask = 0, total = 0;
-        int pocTick = 0, pocVol = -1, pocBid = 0, pocAsk = 0;
-        foreach (var entries in bar.VbpListAll.SortedLHValues)
-        {
-            if (entries == null || entries.Length == 0 || entries[0] == null)
-                continue;
-            var level = entries[0];
-            count++;
-            bid += level.BidVol;
-            ask += level.AskVol;
-            total += level.TotVol;
-            if (level.TotVol > pocVol)
+            int index = end - Columns + 1 + c;
+            if (index < 0) continue;
+            var bar = bars[index];
+            if (bar.VbpListAll == null) continue;
+            foreach (var entries in bar.VbpListAll.SortedLHValues)
             {
-                pocVol = level.TotVol;
-                pocTick = level.PinT;
-                pocBid = level.BidVol;
-                pocAsk = level.AskVol;
+                if (entries == null || entries.Length == 0 || entries[0] == null) continue;
+                var level = entries[0];
+                high = Math.Max(high, level.PinT);
+                low = Math.Min(low, level.PinT);
+                if (c == Columns - 1)
+                {
+                    latestLow = Math.Min(latestLow, level.PinT);
+                    latestHigh = Math.Max(latestHigh, level.PinT);
+                }
+                vol[c] += level.TotVol;
+                delta[c] += (long)level.AskVol - level.BidVol;
+                if (!has[c] || level.TotVol > maxVol[c])
+                {
+                    maxVol[c] = level.TotVol;
+                    poc[c] = level.PinT;
+                }
+                has[c] = true;
             }
         }
-        label.Text = $"DeepLens v0.3.4 | Bar {index} | {count} levels";
-        footer.Text = $"Vol {total} | Delta {ask - bid} | POC {VAn.FromPinT(pocTick).Price:0.00}";
-        int row = 0;
-        int skip = Math.Max(0, count - MaxRows);
-        foreach (var entries in bar.VbpListAll.SortedLHValues)
+
+        if (high == int.MinValue)
         {
-            if (entries == null || entries.Length == 0 || entries[0] == null)
-                continue;
-            if (skip > 0) { skip--; continue; }
-            if (row >= MaxRows) break;
-            var level = entries[0];
-            int slot = Math.Min(count, MaxRows) - 1 - row;
-            bool poc = level.PinT == pocTick;
-            int red = pocVol > 0 ? (int)(120.0 * level.BidVol / pocVol) : 0;
-            int green = pocVol > 0 ? (int)(120.0 * level.AskVol / pocVol) : 0;
-            bidLabels[slot].BackColor = ColorRef.FromRgb((byte)Math.Min(255, 55 + red), 30, 40);
-            askLabels[slot].BackColor = ColorRef.FromRgb(24, (byte)Math.Min(255, 55 + green), 45);
-            bidLabels[slot].LineColor = askLabels[slot].LineColor = poc ? ColorRef.FromRgb(240, 185, 65) : ColorRef.FromRgb(65, 75, 85);
-            bidLabels[slot].Text = $"  {level.BidVol,5}  ";
-            askLabels[slot].Text = $"  {level.AskVol,5}  ";
-            priceLabels[slot].Text = $"{VAn.FromPinT(level.PinT).Price:0.00}";
-            bidLabels[slot].Visible = askLabels[slot].Visible = priceLabels[slot].Visible = true;
-            row++;
+            ClearRows();
+            label.Text = "DeepLens v0.4.0 - no VBP levels";
+            return;
         }
-        for (int k = row; k < MaxRows; k++)
+
+        // Keep the current POC within the visible shared price range.
+        int focus = latestHigh == int.MinValue ? high : Math.Max(latestLow, Math.Min(latestHigh, poc[Columns - 1]));
+        int top = Math.Min(high, Math.Max(low + rows - 1, focus + rows / 2));
+        int visibleRows = Math.Min(rows, top - low + 1);
+        ClearRows();
+        label.Text = $"DeepLens v0.4.0 | 3 bars | Zoom {Zoom}%";
+        label.FontSize = font + 2;
+        for (int k = 0; k < visibleRows; k++)
         {
-            bidLabels[k].Visible = askLabels[k].Visible = priceLabels[k].Visible = false;
+            int tick = top - k;
+            var p = priceLabels[k];
+            p.X = left + Columns * stride;
+            p.Y = .14 + k * step;
+            p.FontSize = font;
+            p.Text = $"{VAn.FromPinT(tick).Price:0.00}";
+            p.Visible = true;
         }
+
+        for (int c = 0; c < Columns; c++)
+        {
+            int index = end - Columns + 1 + c;
+            double x = left + c * stride;
+            headers[c].X = x;
+            headers[c].FontSize = font;
+            footers[c].X = x;
+            footers[c].FontSize = font;
+            if (index < 0) continue;
+            var bar = bars[index];
+            headers[c].Text = $"{bar.dt:HH:mm} " + (c == Columns - 1 ? "LIVE" : "");
+            footers[c].Text = has[c] ? $"V {vol[c]}\nD {delta[c]}" : "No VBP";
+            if (!has[c]) continue;
+            foreach (var entries in bar.VbpListAll.SortedLHValues)
+            {
+                if (entries == null || entries.Length == 0 || entries[0] == null) continue;
+                var level = entries[0];
+                int k = top - level.PinT;
+                if (k < 0 || k >= visibleRows) continue;
+                var b = bidLabels[c,k];
+                var a = askLabels[c,k];
+                b.X = x;
+                a.X = x + askOffset;
+                b.Y = a.Y = .14 + k * step;
+                b.FontSize = a.FontSize = font;
+                int red = maxVol[c] > 0 ? (int)(120.0 * level.BidVol / maxVol[c]) : 0;
+                int green = maxVol[c] > 0 ? (int)(120.0 * level.AskVol / maxVol[c]) : 0;
+                b.BackColor = ColorRef.FromRgb((byte)Math.Min(255, 55 + red), 30, 40);
+                a.BackColor = ColorRef.FromRgb(24, (byte)Math.Min(255, 55 + green), 45);
+                b.LineColor = a.LineColor = level.PinT == poc[c] ? ColorRef.FromRgb(240,185,65) : ColorRef.FromRgb(65,75,85);
+                b.Text = $"  {level.BidVol,5}  ";
+                a.Text = $"  {level.AskVol,5}  ";
+                b.Visible = a.Visible = true;
+            }
+        }
+        footer.Text = $"Showing {visibleRows} of {high - low + 1} price ticks | centered near current POC";
     }
 }
