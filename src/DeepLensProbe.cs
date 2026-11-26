@@ -53,6 +53,7 @@ public class DeepLensProbe : Indicator
     public bool NativeShapes { get; set; } = true;
 
     private readonly List<(IAnnotation Shape, double X1, double X2, double Y1, double Y2, double Y3, double Close, bool Candle)> projected = new();
+    private readonly List<(IAnnotation Label, double X, double Y)> projectedLabels = new();
     private IAnnotation settingsStatus;
     private IAnnotation projectionStatus;
     private int resizeCalls;
@@ -129,6 +130,14 @@ public class DeepLensProbe : Indicator
             }
             p.Shape.Visible = true;
         }
+        foreach (var p in projectedLabels)
+        {
+            p.Label.CoordinateXType = CoordinateTypeEnum.Absolute;
+            p.Label.CoordinateYType = CoordinateTypeEnum.Absolute;
+            p.Label.UseAxisWithSpace = false;
+            p.Label.X = X(p.X);
+            p.Label.Y = Y(p.Y);
+        }
         if (projected.Count > 0)
         {
             var p = projected[0];
@@ -145,8 +154,9 @@ public class DeepLensProbe : Indicator
     public override void OnSet(bool setDefault, bool themeOverride)
     {
         OnEndCall = CallHandler.HistRT;
+        OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.10";
+        Description = "DeepLens v0.6.11";
     }
 
     public override void OnLoad()
@@ -155,7 +165,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.10 - waiting";
+        label.Text = "DeepLens v0.6.11 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -208,6 +218,7 @@ public class DeepLensProbe : Indicator
         }
         footer.Text = "";
         projected.Clear();
+        projectedLabels.Clear();
     }
 
     private static string FindColor(string raw, string name)
@@ -228,7 +239,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.10 - parameter inspector";
+            label.Text = "DeepLens v0.6.11 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -380,14 +391,14 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.10 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.11 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.10 - waiting for bars";
+            label.Text = "DeepLens v0.6.11 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -439,7 +450,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.10 - no VBP levels";
+            label.Text = "DeepLens v0.6.11 - no VBP levels";
             return;
         }
 
@@ -454,7 +465,7 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.10 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.11 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
 
@@ -462,7 +473,11 @@ public class DeepLensProbe : Indicator
         {
             int index = end - Columns + 1 + c;
             double x = left + c * stride;
+            headers[c].CoordinateXType = headers[c].CoordinateYType = CoordinateTypeEnum.Relative;
+            footers[c].CoordinateXType = footers[c].CoordinateYType = CoordinateTypeEnum.Relative;
             headers[c].X = x;
+            headers[c].Y = .09;
+            footers[c].Y = .85;
             headers[c].FontSize = font;
             footers[c].X = x;
             footers[c].FontSize = font;
@@ -470,6 +485,11 @@ public class DeepLensProbe : Indicator
             var bar = bars[index];
             headers[c].Text = $"{bar.dt:HH:mm} " + (c == Columns - 1 ? "LIVE" : "");
             footers[c].Text = has[c] ? $"V {vol[c]}\nD {delta[c]}" : "No VBP";
+            if (NativeShapes)
+            {
+                projectedLabels.Add((headers[c], x, .09));
+                projectedLabels.Add((footers[c], x, .85));
+            }
             if (!has[c]) continue;
             // Text-based candle preview: each row corresponds to an inherited price bucket.
             // Body and wick are quantized to that grid, not exact sub-row geometry.
@@ -584,7 +604,7 @@ public class DeepLensProbe : Indicator
                 b.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 b.LineColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 b.LineWidth = 0;
-                b.Visible = blocks > 0;
+                b.Visible = !NativeShapes && blocks > 0;
                 if (NativeShapes && d != 0)
                 {
                     var rect = profileRects[c,k];
@@ -595,13 +615,15 @@ public class DeepLensProbe : Indicator
                     rect.LineWidth = isPoc ? pocWidth : 0;
                     rect.Visible = false;
                 }
+                a.CoordinateXType = a.CoordinateYType = CoordinateTypeEnum.Relative;
                 a.X = x;
-                
+                if (NativeShapes)
+                    projectedLabels.Add((a, x, .14 + (k - .35) * step));
                 a.Text = !showZero && d == 0 ? "" : $"{d}";
                 a.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 a.ForeColor = d < 0 ? bidText : askText;
-                a.LineColor = isPoc ? pocColor : ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
-                a.LineWidth = isPoc ? pocWidth : 0;
+                a.LineColor = isPoc && !NativeShapes ? pocColor : ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
+                a.LineWidth = isPoc && !NativeShapes ? pocWidth : 0;
                 a.Visible = showZero || d != 0;
             }
         }
