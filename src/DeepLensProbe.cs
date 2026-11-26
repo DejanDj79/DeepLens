@@ -24,6 +24,15 @@ public class DeepLensProbe : Indicator
     [VolCustom(MinValue = 60, MaxValue = 180, IncrementValue = 10)]
     public int Zoom { get; set; } = 100;
 
+    [Category("Layout")]
+    [DisplayName("Auto Fit (group ticks)")]
+    public bool AutoFit { get; set; } = true;
+
+    [Category("Layout")]
+    [DisplayName("Detail offset (ticks)")]
+    [VolCustom(MinValue = -10000, MaxValue = 10000, IncrementValue = 1)]
+    public int DetailOffset { get; set; } = 0;
+
     private const int Columns = 3;
     private const int MaxRows = 40;
     private IAnnotation label;
@@ -52,13 +61,13 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.4.0";
+        Description = "DeepLens v0.4.1";
     }
 
     public override void OnLoad()
     {
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.4.0 - waiting";
+        label.Text = "DeepLens v0.4.1 - waiting";
         footer = MakeText(.09, .91, 10);
         for (int c = 0; c < Columns; c++)
         {
@@ -103,7 +112,7 @@ public class DeepLensProbe : Indicator
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.4.0 - waiting for bars";
+            label.Text = "DeepLens v0.4.1 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -113,8 +122,8 @@ public class DeepLensProbe : Indicator
         double step = .027 * zoom;
         int rows = Math.Min(MaxRows, Math.Max(1, (int)(.68 / step)));
         int font = Math.Max(8, (int)(10 * zoom));
-        double stride = .15 * zoom;
-        double askOffset = .065 * zoom;
+        double stride = .13 * zoom;
+        double askOffset = .036 * zoom;
         double left = .10;
         int high = int.MinValue, low = int.MaxValue;
         int latestLow = int.MaxValue, latestHigh = int.MinValue;
@@ -155,25 +164,27 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.4.0 - no VBP levels";
+            label.Text = "DeepLens v0.4.1 - no VBP levels";
             return;
         }
 
         // Keep the current POC within the visible shared price range.
         int focus = latestHigh == int.MinValue ? high : Math.Max(latestLow, Math.Min(latestHigh, poc[Columns - 1]));
-        int top = Math.Min(high, Math.Max(low + rows - 1, focus + rows / 2));
-        int visibleRows = Math.Min(rows, top - low + 1);
+        int range = high - low + 1;
+        int group = AutoFit ? Math.Max(1, (range + rows - 1) / rows) : 1;
+        int top = AutoFit ? high : Math.Min(high, Math.Max(low + rows - 1, focus + DetailOffset + rows / 2));
+        int visibleRows = Math.Min(rows, (top - low + group) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.4.0 | 3 bars | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.4.1 | {(AutoFit ? "AUTO FIT" : "DETAIL")} | {group} tick/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         for (int k = 0; k < visibleRows; k++)
         {
-            int tick = top - k;
+            int tick = top - k * group;
             var p = priceLabels[k];
             p.X = left + Columns * stride;
             p.Y = .14 + k * step;
             p.FontSize = font;
-            p.Text = $"{VAn.FromPinT(tick).Price:0.00}";
+            p.Text = group == 1 ? $"{VAn.FromPinT(tick).Price:0.00}" : $"{VAn.FromPinT(tick).Price:0.00} - {VAn.FromPinT(Math.Max(low, tick - group + 1)).Price:0.00}";
             p.Visible = true;
         }
 
@@ -190,28 +201,44 @@ public class DeepLensProbe : Indicator
             headers[c].Text = $"{bar.dt:HH:mm} " + (c == Columns - 1 ? "LIVE" : "");
             footers[c].Text = has[c] ? $"V {vol[c]}\nD {delta[c]}" : "No VBP";
             if (!has[c]) continue;
+            long[] bids = new long[MaxRows];
+            long[] asks = new long[MaxRows];
+            long[] totals = new long[MaxRows];
+            bool[] present = new bool[MaxRows];
             foreach (var entries in bar.VbpListAll.SortedLHValues)
             {
                 if (entries == null || entries.Length == 0 || entries[0] == null) continue;
                 var level = entries[0];
-                int k = top - level.PinT;
-                if (k < 0 || k >= visibleRows) continue;
+                if (level.PinT > top || level.PinT < low) continue;
+                int k = (top - level.PinT) / group;
+                if (k >= visibleRows) continue;
+                bids[k] += level.BidVol;
+                asks[k] += level.AskVol;
+                totals[k] += level.TotVol;
+                present[k] = true;
+            }
+            long scale = 1;
+            for (int k = 0; k < visibleRows; k++)
+                if (totals[k] > scale) scale = totals[k];
+            for (int k = 0; k < visibleRows; k++)
+            {
+                if (!present[k]) continue;
                 var b = bidLabels[c,k];
                 var a = askLabels[c,k];
                 b.X = x;
                 a.X = x + askOffset;
                 b.Y = a.Y = .14 + k * step;
                 b.FontSize = a.FontSize = font;
-                int red = maxVol[c] > 0 ? (int)(120.0 * level.BidVol / maxVol[c]) : 0;
-                int green = maxVol[c] > 0 ? (int)(120.0 * level.AskVol / maxVol[c]) : 0;
+                int red = (int)(120.0 * bids[k] / scale);
+                int green = (int)(120.0 * asks[k] / scale);
                 b.BackColor = ColorRef.FromRgb((byte)Math.Min(255, 55 + red), 30, 40);
                 a.BackColor = ColorRef.FromRgb(24, (byte)Math.Min(255, 55 + green), 45);
-                b.LineColor = a.LineColor = level.PinT == poc[c] ? ColorRef.FromRgb(240,185,65) : ColorRef.FromRgb(65,75,85);
-                b.Text = $"  {level.BidVol,5}  ";
-                a.Text = $"  {level.AskVol,5}  ";
+                b.LineColor = a.LineColor = poc[c] <= top && (top - poc[c]) / group == k ? ColorRef.FromRgb(240,185,65) : ColorRef.FromRgb(65,75,85);
+                b.Text = $"  {bids[k],5}  ";
+                a.Text = $"  {asks[k],5}  ";
                 b.Visible = a.Visible = true;
             }
         }
-        footer.Text = $"Showing {visibleRows} of {high - low + 1} price ticks | centered near current POC";
+        footer.Text = AutoFit ? $"Full range: {range} ticks / {visibleRows} rows | grouped volumes" : $"Showing {visibleRows} of {range} ticks | detail offset {DetailOffset}";
     }
 }
