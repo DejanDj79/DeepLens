@@ -22,7 +22,8 @@ public class DeepLensProbe : Indicator
     public override void OnSet(bool setDefault, bool themeOverride)
     {
         OnEndCall = CallHandler.HistRT;
-        Description = "Registration test";
+        NeedVbp = true;
+        Description = "VBP data test";
     }
 
     public override void OnLoad()
@@ -36,7 +37,7 @@ public class DeepLensProbe : Indicator
         label.FontSize = 16;
         label.FontBold = true;
         label.ForeColor = ColorRef.FromRgb(230, 235, 240);
-        label.Text = "DeepLens - registration OK";
+        label.Text = "DeepLens - waiting for VBP data";
         VAn.AddAnnotation(IndVars.FrontAnnList, label);
     }
 
