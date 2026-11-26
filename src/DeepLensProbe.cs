@@ -52,8 +52,7 @@ public class DeepLensProbe : Indicator
     [DisplayName("Native shapes test")]
     public bool NativeShapes { get; set; } = true;
 
-    private IAnnotation absoluteProbe;
-    private IAnnotation absoluteLabel;
+    private readonly List<(IAnnotation Shape, double X1, double X2, double Y1, double Y2, double Y3, double Close, bool Candle)> projected = new();
     private IAnnotation settingsStatus;
     private readonly IAnnotation[,] profileRects = new IAnnotation[Columns, MaxRows];
     private readonly IAnnotation[] nativeCandles = new IAnnotation[Columns];
@@ -86,8 +85,8 @@ public class DeepLensProbe : Indicator
     {
         var a = VAn.CreateAnnotation(type);
         a.Area = ChartAreaRef.Main;
-        a.CoordinateXType = CoordinateTypeEnum.Relative;
-        a.CoordinateYType = CoordinateTypeEnum.Relative;
+        a.CoordinateXType = CoordinateTypeEnum.Absolute;
+        a.CoordinateYType = CoordinateTypeEnum.Absolute;
         a.UseAxisWithSpace = false;
         a.PlotForeground = true;
         a.Margin = MarginEnum.None;
@@ -98,36 +97,48 @@ public class DeepLensProbe : Indicator
         return a;
     }
 
+    // Map overlay positions into the visible chart axes for native shapes.
+    private void ProjectShapes()
+    {
+        if (AxisX == null || AxisY == null) return;
+        double xmin = AxisX.ViewMinimum, xmax = AxisX.ViewMaximum;
+        double ymin = AxisY.ViewMinimum, ymax = AxisY.ViewMaximum;
+        if (!double.IsFinite(xmin) || !double.IsFinite(xmax) ||
+            !double.IsFinite(ymin) || !double.IsFinite(ymax) ||
+            xmax <= xmin || ymax <= ymin) return;
+        double X(double v) => xmin + v * (xmax - xmin);
+        double Y(double v) => ymax - v * (ymax - ymin);
+        foreach (var p in projected)
+        {
+            p.Shape.X = X(p.X1);
+            p.Shape.X2 = X(p.X2);
+            p.Shape.Y = Y(p.Y1);
+            p.Shape.Y2 = Y(p.Y2);
+            if (p.Candle)
+            {
+                p.Shape.Y3 = Y(p.Y3);
+                p.Shape.Height = Y(p.Close) - p.Shape.Y;
+            }
+            p.Shape.Visible = true;
+        }
+    }
+
+    public override void OnResizeAxis(bool isFinal)
+    {
+        ProjectShapes();
+    }
+
     public override void OnSet(bool setDefault, bool themeOverride)
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.8";
+        Description = "DeepLens v0.6.9";
     }
 
     public override void OnLoad()
     {
-        absoluteProbe = VAn.CreateAnnotation(AnnotationType.Candlestick);
-        absoluteProbe.Area = ChartAreaRef.Main;
-        absoluteProbe.CoordinateXType = CoordinateTypeEnum.Absolute;
-        absoluteProbe.CoordinateYType = CoordinateTypeEnum.Absolute;
-        absoluteProbe.UseAxisWithSpace = false;
-        absoluteProbe.LineWidth = 3;
-        absoluteProbe.BackColor = ColorRef.FromRgb(255, 170, 0);
-        absoluteProbe.LineColor = ColorRef.FromRgb(255, 255, 0);
-        absoluteProbe.Visible = false;
-        VAn.AddAnnotation(IndVars.Ann_List, absoluteProbe);
-        absoluteLabel = VAn.CreateAnnotation(AnnotationType.Text);
-        absoluteLabel.Area = ChartAreaRef.Main;
-        absoluteLabel.CoordinateXType = CoordinateTypeEnum.Absolute;
-        absoluteLabel.CoordinateYType = CoordinateTypeEnum.Absolute;
-        absoluteLabel.Text = "NATIVE OHLC TEST";
-        absoluteLabel.ForeColor = ColorRef.FromRgb(255, 255, 0);
-        absoluteLabel.FontSize = 12;
-        absoluteLabel.Visible = false;
-        VAn.AddAnnotation(IndVars.FrontAnnList, absoluteLabel);
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.8 - waiting";
+        label.Text = "DeepLens v0.6.9 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -179,7 +190,7 @@ public class DeepLensProbe : Indicator
             footers[c].Text = "";
         }
         footer.Text = "";
-        absoluteProbe.Visible = absoluteLabel.Visible = false;
+        projected.Clear();
     }
 
     private static string FindColor(string raw, string name)
@@ -199,7 +210,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.8 - parameter inspector";
+            label.Text = "DeepLens v0.6.9 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -351,14 +362,14 @@ public class DeepLensProbe : Indicator
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.8 - select Delta / Profile / Volume / Manual / Fixed";
+            label.Text = "DeepLens v0.6.9 - select Delta / Profile / Volume / Manual / Fixed";
             return;
         }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.8 - waiting for bars";
+            label.Text = "DeepLens v0.6.9 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -410,7 +421,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.8 - no VBP levels";
+            label.Text = "DeepLens v0.6.9 - no VBP levels";
             return;
         }
 
@@ -425,26 +436,9 @@ public class DeepLensProbe : Indicator
         int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
         int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.6.8 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.9 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
-        if (NativeShapes && end >= 1)
-        {
-            int probeIndex = end - 1;
-            var probeBar = bars[probeIndex];
-            absoluteProbe.X = probeIndex + .55;
-            absoluteProbe.X2 = probeIndex + 1.45;
-            absoluteProbe.Y = probeBar.Open;
-            absoluteProbe.Height = probeBar.Close - probeBar.Open;
-            absoluteProbe.Y2 = probeBar.Low;
-            absoluteProbe.Y3 = probeBar.High;
-            absoluteProbe.PlotForeground = true;
-            absoluteProbe.Visible = true;
-            absoluteLabel.X = probeIndex + 1;
-            absoluteLabel.Y = probeBar.High;
-            absoluteLabel.Visible = true;
-            settingsStatus.Text += $"\nAbsolute probe: bar {probeIndex} {probeBar.dt:HH:mm} | O {probeBar.Open} H {probeBar.High} L {probeBar.Low} C {probeBar.Close}";
-        }
 
         for (int c = 0; c < Columns; c++)
         {
@@ -476,16 +470,13 @@ public class DeepLensProbe : Indicator
                 {
                     var candle = nativeCandles[c];
                     double halfWidth = Math.Max(.0015, Math.Min(.005, markerWidth * .0015)) * zoom;
-                    candle.X = x - .009 * zoom - halfWidth;
-                    candle.X2 = x - .009 * zoom + halfWidth;
-                    candle.Y = Math.Max(yMin, Math.Min(yMax, yOpen));
-                    candle.Height = Math.Max(yMin, Math.Min(yMax, yClose)) - candle.Y;
-                    candle.Y2 = Math.Max(yMin, Math.Min(yMax, yLow));
-                    candle.Y3 = Math.Max(yMin, Math.Min(yMax, yHigh));
+                    projected.Add((candle, x - .009 * zoom - halfWidth, x - .009 * zoom + halfWidth,
+                        Math.Clamp(yOpen, yMin, yMax), Math.Clamp(yLow, yMin, yMax),
+                        Math.Clamp(yHigh, yMin, yMax), Math.Clamp(yClose, yMin, yMax), true));
                     candle.BackColor = ColorRef.FromRgb(120, 125, 145);
                     candle.LineColor = ColorRef.FromRgb(180, 185, 200);
                     candle.LineWidth = 1;
-                    candle.Visible = true;
+                    candle.Visible = false;
                 }
             }
             else if (!NativeShapes && outsideStyle == 1 && markerAlignment == 0 && candleHigh >= candleLow && candleOpen >= candleLow && candleOpen <= candleHigh && candleClose >= candleLow && candleClose <= candleHigh)
@@ -575,18 +566,16 @@ public class DeepLensProbe : Indicator
                 b.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 b.LineColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 b.LineWidth = 0;
-                b.Visible = blocks > 0;
-                if (false && NativeShapes && d != 0)
+                b.Visible = !NativeShapes && blocks > 0;
+                if (NativeShapes && d != 0)
                 {
                     var rect = profileRects[c,k];
-                    rect.X = x;
-                    rect.X2 = x + .085 * zoom * Math.Abs(d) / deltaScale;
-                    rect.Y = .14 + (k - .5) * step;
-                    rect.Y2 = .14 + (k + .5) * step;
+                    projected.Add((rect, x, x + .085 * zoom * Math.Abs(d) / deltaScale,
+                        .14 + (k - .5) * step, .14 + (k + .5) * step, 0, 0, false));
                     rect.BackColor = profileColor;
                     rect.LineColor = isPoc ? pocColor : profileColor;
                     rect.LineWidth = isPoc ? pocWidth : 0;
-                    rect.Visible = true;
+                    rect.Visible = false;
                 }
                 a.X = x;
                 
@@ -598,6 +587,7 @@ public class DeepLensProbe : Indicator
                 a.Visible = showZero || d != 0;
             }
         }
+        ProjectShapes();
         footer.Text = $"Fixed-grid comparison | {visibleRows} rows | offset {DetailOffset} ticks";
     }
 }
