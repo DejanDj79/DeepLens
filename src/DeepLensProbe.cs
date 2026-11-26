@@ -40,7 +40,7 @@ public class DeepLensProbe : Indicator
 
     [Category("Deep Print diagnostic")]
     [DisplayName("Show all parameters")]
-    public bool ShowAllParameters { get; set; } = true;
+    public bool ShowAllParameters { get; set; } = false;
 
     [Category("Deep Print diagnostic")]
     [DisplayName("Expanded parameter index (-1 = overview)")]
@@ -82,13 +82,13 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.4.6";
+        Description = "DeepLens v0.5.0";
     }
 
     public override void OnLoad()
     {
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.4.6 - waiting";
+        label.Text = "DeepLens v0.5.0 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -139,13 +139,24 @@ public class DeepLensProbe : Indicator
         footer.Text = "";
     }
 
+    private static string FindColor(string raw, string name)
+    {
+        int at = raw.IndexOf("\"" + name + "\"");
+        if (at < 0) return "";
+        int value = raw.IndexOf("\"Value\"", at);
+        if (value < 0) return "";
+        int hash = raw.IndexOf('#', value);
+        if (hash < 0 || hash + 9 > raw.Length) return "";
+        return raw.Substring(hash, 9);
+    }
+
     public override void OnEnd(bool isRt)
     {
         if (label == null) return;
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.4.6 - parameter inspector";
+            label.Text = "DeepLens v0.5.0 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -213,11 +224,52 @@ public class DeepLensProbe : Indicator
         settingsStatus.Visible = false;
         for (int col = 0; col < 3; col++)
             parameterColumns[col].Visible = false;
+        var style = VAn.GetParamsById(InspectIndex);
+        bool inherited = false;
+        bool showZero = true, enablePoc = true;
+        int sourceFont = 10, opacity = 70;
+        float borderWidth = 1, pocWidth = 1;
+        ColorRef bidColor = ColorRef.FromRgb(150, 40, 55);
+        ColorRef askColor = ColorRef.FromRgb(35, 150, 65);
+        ColorRef bidText = ColorRef.FromRgb(235, 240, 245);
+        ColorRef askText = bidText;
+        ColorRef pocColor = ColorRef.FromRgb(240, 185, 65);
+        if (style != null && style.name == "Deep Print" && style.XMLPropList != null)
+        {
+            foreach (var prop in style.XMLPropList)
+            {
+                string raw = prop.Value == null ? "" : prop.Value.ToString();
+                if (raw == null) continue;
+                if (prop.Name == "EnablePoc") bool.TryParse(raw, out enablePoc);
+                if (prop.Name == "ShowZeroOnText") bool.TryParse(raw, out showZero);
+                if (prop.Name == "FontSize" && int.TryParse(raw, out int f)) sourceFont = f;
+                if (prop.Name == "BackOpacity" && int.TryParse(raw, out int o)) opacity = o;
+                if (prop.Name == "BorderWidth" && float.TryParse(raw.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float w)) borderWidth = w;
+                if (prop.Name == "PocBorderWidth" && float.TryParse(raw.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float pw)) pocWidth = pw;
+                if (prop.Name == "PocBorderColor" && ColorRef.TryParse(raw, out var pc)) pocColor = pc;
+                if (prop.Name == "Background")
+                {
+                    string bv = FindColor(raw, "FixedBidColor");
+                    string av = FindColor(raw, "FixedAskColor");
+                    if (ColorRef.TryParse(bv, out var bc) && ColorRef.TryParse(av, out var ac))
+                    {
+                        bidColor = bc;
+                        askColor = ac;
+                        inherited = true;
+                    }
+                }
+                if (prop.Name == "Text")
+                {
+                    if (ColorRef.TryParse(FindColor(raw, "FixedBidColor"), out var bt)) bidText = bt;
+                    if (ColorRef.TryParse(FindColor(raw, "FixedAskColor"), out var at)) askText = at;
+                }
+            }
+        }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.4.6 - waiting for bars";
+            label.Text = "DeepLens v0.5.0 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -226,7 +278,7 @@ public class DeepLensProbe : Indicator
         double zoom = Math.Max(60, Math.Min(180, Zoom)) / 100.0;
         double step = .027 * zoom;
         int rows = Math.Min(MaxRows, Math.Max(1, (int)(.68 / step)));
-        int font = Math.Max(8, (int)(10 * zoom));
+        int font = Math.Max(8, Math.Min(24, (int)(sourceFont * zoom)));
         double stride = .13 * zoom;
         double askOffset = .036 * zoom;
         double left = .10;
@@ -269,7 +321,7 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.4.6 - no VBP levels";
+            label.Text = "DeepLens v0.5.0 - no VBP levels";
             return;
         }
 
@@ -280,8 +332,10 @@ public class DeepLensProbe : Indicator
         int top = AutoFit ? high : Math.Min(high, Math.Max(low + rows - 1, focus + DetailOffset + rows / 2));
         int visibleRows = Math.Min(rows, (top - low + group) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.4.6 | {(AutoFit ? "AUTO FIT" : "DETAIL")} | {group} tick/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.5.0 | {(AutoFit ? "AUTO FIT" : "DETAIL")} | {group} tick/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
+        settingsStatus.Visible = true;
+        settingsStatus.Text = inherited ? "Deep Print: base colors linked (preview)" : "Deep Print: fallback style";
         for (int k = 0; k < visibleRows; k++)
         {
             int tick = top - k * group;
@@ -336,11 +390,24 @@ public class DeepLensProbe : Indicator
                 b.FontSize = a.FontSize = font;
                 int red = (int)(120.0 * bids[k] / scale);
                 int green = (int)(120.0 * asks[k] / scale);
-                b.BackColor = ColorRef.FromRgb((byte)Math.Min(255, 55 + red), 30, 40);
-                a.BackColor = ColorRef.FromRgb(24, (byte)Math.Min(255, 55 + green), 45);
-                b.LineColor = a.LineColor = poc[c] <= top && (top - poc[c]) / group == k ? ColorRef.FromRgb(240,185,65) : ColorRef.FromRgb(65,75,85);
-                b.Text = $"  {bids[k],5}  ";
-                a.Text = $"  {asks[k],5}  ";
+                if (inherited)
+                {
+                    byte alpha = (byte)(255 * Math.Max(0, Math.Min(100, opacity)) / 100);
+                    b.BackColor = bidColor.WithOpacity(alpha);
+                    a.BackColor = askColor.WithOpacity(alpha);
+                }
+                else
+                {
+                    b.BackColor = ColorRef.FromRgb((byte)Math.Min(255, 55 + red), 30, 40);
+                    a.BackColor = ColorRef.FromRgb(24, (byte)Math.Min(255, 55 + green), 45);
+                }
+                b.ForeColor = bidText;
+                a.ForeColor = askText;
+                bool isPoc = enablePoc && poc[c] <= top && (top - poc[c]) / group == k;
+                b.LineColor = a.LineColor = isPoc ? pocColor : ColorRef.FromRgb(65,75,85);
+                b.LineWidth = a.LineWidth = isPoc ? pocWidth : borderWidth;
+                b.Text = !showZero && bids[k] == 0 ? "     " : $"  {bids[k],5}  ";
+                a.Text = !showZero && asks[k] == 0 ? "     " : $"  {asks[k],5}  ";
                 b.Visible = a.Visible = true;
             }
         }
