@@ -25,10 +25,6 @@ public class DeepLensProbe : Indicator
     public int Zoom { get; set; } = 100;
 
     [Category("Layout")]
-    [DisplayName("Auto Fit (group ticks)")]
-    public bool AutoFit { get; set; } = true;
-
-    [Category("Layout")]
     [DisplayName("Detail offset (ticks)")]
     [VolCustom(MinValue = -10000, MaxValue = 10000, IncrementValue = 1)]
     public int DetailOffset { get; set; } = 0;
@@ -82,13 +78,13 @@ public class DeepLensProbe : Indicator
     {
         OnEndCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.5.1";
+        Description = "DeepLens v0.6.0";
     }
 
     public override void OnLoad()
     {
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.5.1 - waiting";
+        label.Text = "DeepLens v0.6.0 - waiting";
         footer = MakeText(.09, .91, 10);
         settingsStatus = MakeText(.09, .045, 10);
         settingsStatus.X = .48;
@@ -156,7 +152,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.5.1 - parameter inspector";
+            label.Text = "DeepLens v0.6.0 - parameter inspector";
             label.FontSize = 12;
             var parameters = VAn.GetParamsById(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -230,7 +226,9 @@ public class DeepLensProbe : Indicator
         int revision = 17;
         int parameterCount = 0;
         bool showZero = true, enablePoc = true;
-        int sourceFont = 10, opacity = 70;
+        float sourceFont = 10;
+        int opacity = 70;
+        int footType = -1, showStyle = -1, inputData = -1, autoGrouping = -1, manualTicks = 0, groupMode = -1, filterMin = -1, filterMax = -1, proportion = -1;
         float borderWidth = 1, pocWidth = 1;
         ColorRef bidColor = ColorRef.FromRgb(150, 40, 55);
         ColorRef askColor = ColorRef.FromRgb(35, 150, 65);
@@ -253,7 +251,19 @@ public class DeepLensProbe : Indicator
                     if (bool.TryParse(raw, out bool ep)) enablePoc = ep;
                 }
                 if (prop.Name == "ShowZeroOnText") bool.TryParse(raw, out showZero);
-                if (prop.Name == "FontSize" && int.TryParse(raw, out int f)) sourceFont = f;
+                if (prop.Name == "FontSize" && float.TryParse(raw.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float f)) sourceFont = f;
+                if (int.TryParse(raw, out int iv))
+                {
+                    if (prop.Name == "FootType") footType = iv;
+                    if (prop.Name == "ShowStyle") showStyle = iv;
+                    if (prop.Name == "InputData") inputData = iv;
+                    if (prop.Name == "AutoGrouping") autoGrouping = iv;
+                    if (prop.Name == "ManualTicks") manualTicks = iv;
+                    if (prop.Name == "GroupMode") groupMode = iv;
+                    if (prop.Name == "FilterMin") filterMin = iv;
+                    if (prop.Name == "FilterMax") filterMax = iv;
+                    if (prop.Name == "FootProportion") proportion = iv;
+                }
                 if (prop.Name == "BackOpacity" && int.TryParse(raw, out int o)) opacity = o;
                 if (prop.Name == "BorderWidth" && float.TryParse(raw.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float w)) borderWidth = w;
                 if (prop.Name == "PocBorderWidth" && float.TryParse(raw.Replace(',', '.'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float pw)) pocWidth = pw;
@@ -278,11 +288,25 @@ public class DeepLensProbe : Indicator
                 }
             }
         }
+        settingsStatus.Visible = true;
+        settingsStatus.Text = $"Index {InspectIndex}: {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
+            + $"FootType={footType} ShowStyle={showStyle} InputData={inputData}\n"
+            + $"AutoGrouping={autoGrouping} ManualTicks={manualTicks} GroupMode={groupMode}\n"
+            + $"FilterMin={filterMin} FilterMax={filterMax} Proportion={proportion}\n"
+            + "DELTA comparison preview (not verified native mapping)";
+        // Comparison only: user-selected source is Delta / Volume / Manual / Fixed.
+        // Do not render filtered or non-volume data as if it were verified.
+        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || inputData != 0 || autoGrouping != 0 || groupMode != 0 || filterMin != 0 || filterMax != 0)
+        {
+            ClearRows();
+            label.Text = "DeepLens v0.6.0 - unsupported/unverified source";
+            return;
+        }
         var bars = VAn.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
-            label.Text = "DeepLens v0.5.1 - waiting for bars";
+            label.Text = "DeepLens v0.6.0 - waiting for bars";
             return;
         }
         int end = VAn.BarIndex;
@@ -334,25 +358,25 @@ public class DeepLensProbe : Indicator
         if (high == int.MinValue)
         {
             ClearRows();
-            label.Text = "DeepLens v0.5.1 - no VBP levels";
+            label.Text = "DeepLens v0.6.0 - no VBP levels";
             return;
         }
 
         // Keep the current POC within the visible shared price range.
         int focus = latestHigh == int.MinValue ? high : Math.Max(latestLow, Math.Min(latestHigh, poc[Columns - 1]));
         int range = high - low + 1;
-        int group = AutoFit ? Math.Max(1, (range + rows - 1) / rows) : 1;
-        int top = AutoFit ? high : Math.Min(high, Math.Max(low + rows - 1, focus + DetailOffset + rows / 2));
-        int visibleRows = Math.Min(rows, (top - low + group) / group);
+        int group = manualTicks;
+        // Candidate fixed grid anchored at tick zero; compare against native prices.
+        int gridLow = (int)Math.Floor((double)low / group) * group;
+        int gridHigh = (int)Math.Floor((double)high / group) * group + group - 1;
+        int focusHigh = (int)Math.Floor((double)(focus + DetailOffset) / group) * group + group - 1;
+        int top = Math.Min(gridHigh, Math.Max(gridLow + rows * group - 1, focusHigh + (rows / 2) * group));
+        int visibleRows = Math.Min(rows, (top - gridLow + 1) / group);
         ClearRows();
-        label.Text = $"DeepLens v0.5.1 | {(AutoFit ? "AUTO FIT" : "DETAIL")} | {group} tick/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.0 | DELTA TEST | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = true;
-        settingsStatus.Text = $"Index {InspectIndex}: {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
-            + $"Read {DateTime.Now:HH:mm:ss} | Rev {revision:X8}\n"
-            + $"FixedBid {rawBid} | FixedAsk {rawAsk}\n"
-            + $"EnablePoc raw: {rawPoc} | applied: {enablePoc}\n"
-            + (inherited ? "Base colors linked (preview)" : "Fallback style");
+
         for (int k = 0; k < visibleRows; k++)
         {
             int tick = top - k * group;
@@ -360,7 +384,7 @@ public class DeepLensProbe : Indicator
             p.X = left + Columns * stride;
             p.Y = .14 + k * step;
             p.FontSize = font;
-            p.Text = group == 1 ? $"{VAn.FromPinT(tick).Price:0.00}" : $"{VAn.FromPinT(tick).Price:0.00} - {VAn.FromPinT(Math.Max(low, tick - group + 1)).Price:0.00}";
+            p.Text = group == 1 ? $"{VAn.FromPinT(tick).Price:0.00}" : $"{VAn.FromPinT(tick).Price:0.00} - {VAn.FromPinT(tick - group + 1).Price:0.00}";
             p.Visible = true;
         }
 
@@ -423,11 +447,14 @@ public class DeepLensProbe : Indicator
                 bool isPoc = enablePoc && poc[c] <= top && (top - poc[c]) / group == k;
                 b.LineColor = a.LineColor = isPoc ? pocColor : ColorRef.FromRgb(65,75,85);
                 b.LineWidth = a.LineWidth = isPoc ? pocWidth : borderWidth;
-                b.Text = !showZero && bids[k] == 0 ? "     " : $"  {bids[k],5}  ";
-                a.Text = !showZero && asks[k] == 0 ? "     " : $"  {asks[k],5}  ";
-                b.Visible = a.Visible = true;
+                long d = asks[k] - bids[k];
+                b.Text = !showZero && d == 0 ? "     " : $"  {d,5}  ";
+                b.BackColor = (d < 0 ? bidColor : askColor).WithOpacity((byte)(255 * Math.Max(0, Math.Min(100, opacity)) / 100));
+                b.ForeColor = d < 0 ? bidText : askText;
+                b.Visible = true;
+                a.Visible = false;
             }
         }
-        footer.Text = AutoFit ? $"Full range: {range} ticks / {visibleRows} rows | grouped volumes" : $"Showing {visibleRows} of {range} ticks | detail offset {DetailOffset}";
+        footer.Text = $"Fixed-grid comparison | {visibleRows} rows | offset {DetailOffset} ticks";
     }
 }
