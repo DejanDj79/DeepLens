@@ -137,6 +137,7 @@ public class DeepLensProbe : Indicator
     private int resolvedSourceIndex = -1;
     private int lastRequestedIndex = -1;
     private readonly IAnnotation[,] profileRects = new IAnnotation[MaxColumns, MaxRows];
+    private readonly IAnnotation[,] secondaryRects = new IAnnotation[MaxColumns, MaxRows];
     private readonly IAnnotation[] nativeCandles = new IAnnotation[MaxColumns];
     private readonly IAnnotation[] parameterColumns = new IAnnotation[3];
     private const int MaxColumns = 12;
@@ -239,14 +240,11 @@ public class DeepLensProbe : Indicator
             fontSize = Math.Clamp((int)Math.Floor((columnPixels - 2) / maxChars), 6, fontSize);
             strideRows = (int)Math.Min(int.MaxValue, Math.Max(1, Math.Ceiling(fontSize * 1.5 / rowPixels)));
         }
-        int lastColumn = -1, lastRow = int.MinValue;
+        var lastRows = new int[MaxColumns * 2];
+        for (int i = 0; i < lastRows.Length; i++) lastRows[i] = int.MinValue;
         foreach (var p in projectedLabels)
         {
-            if (p.Column != lastColumn)
-            {
-                lastColumn = p.Column;
-                lastRow = int.MinValue;
-            }
+            int lastRow = lastRows[p.Column];
             p.Label.CoordinateXType = CoordinateTypeEnum.Absolute;
             p.Label.CoordinateYType = CoordinateTypeEnum.Absolute;
             p.Label.UseAxisWithSpace = false;
@@ -257,7 +255,7 @@ public class DeepLensProbe : Indicator
             bool widthFits = !pixelFit || p.Label.Text.Length * fontSize + 2 <= columnPixels;
             bool show = widthFits && (lastRow == int.MinValue || (long)p.Row - lastRow >= strideRows);
             p.Label.Visible = show;
-            if (show) lastRow = p.Row;
+            if (show) lastRows[p.Column] = p.Row;
         }
         if (pixelFit)
             projectionStatus.Text += $"\nArea: {pixelWidth:0} x {pixelHeight:0} px | row {rowPixels:0.0}px | font {fontSize} | stride {strideRows}";
@@ -279,7 +277,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.27";
+        Description = "DeepLens v0.6.28";
     }
 
     public override void OnInit()
@@ -303,6 +301,7 @@ public class DeepLensProbe : Indicator
             for (int k = 0; k < MaxRows; k++)
             {
                 profileRects[c,k] = null;
+                secondaryRects[c,k] = null;
                 bidLabels[c,k] = null;
                 askLabels[c,k] = null;
             }
@@ -325,7 +324,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.27 - waiting";
+        label.Text = "DeepLens v0.6.28 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -372,6 +371,17 @@ public class DeepLensProbe : Indicator
         bidLabels[c,k].Visible = askLabels[c,k].Visible = false;
     }
 
+    private void ConfigureValueLabel(IAnnotation label, long value, ColorRef foreground, ColorRef transparent, int font)
+    {
+        label.FontSize = Math.Min(25, font + 1);
+        label.FontBold = false;
+        label.Text = value.ToString();
+        label.ForeColor = foreground;
+        label.BackColor = label.LineColor = transparent;
+        label.LineWidth = 0;
+        label.Visible = false;
+    }
+
     private void ClearRows()
     {
         panelBackground.Visible = false;
@@ -383,6 +393,7 @@ public class DeepLensProbe : Indicator
                 if (profileRects[c,k] == null) continue;
                 bidLabels[c,k].Visible = askLabels[c,k].Visible = false;
                 profileRects[c,k].Visible = false;
+                if (secondaryRects[c,k] != null) secondaryRects[c,k].Visible = false;
             }
         }
         for (int c = 0; c < MaxColumns; c++)
@@ -432,7 +443,7 @@ public class DeepLensProbe : Indicator
             if (prop.Name == "FilterMax") max = value;
             if (prop.Name == "FootProportion") proportion = value;
         }
-        return type == 2 && mode == 1 && input == 0 && grouping == 1 &&
+        return type >= 0 && type <= 3 && mode == 1 && input == 0 && grouping == 1 &&
             groupMode == 0 && ticks >= 1 && ticks <= 10000 && min == 0 && max == 0 && proportion == 0;
     }
 
@@ -763,7 +774,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.27 - parameter inspector";
+            label.Text = "DeepLens v0.6.28 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -846,6 +857,8 @@ public class DeepLensProbe : Indicator
         ColorRef askColor = ColorRef.FromRgb(35, 150, 65);
         ColorRef bidText = ColorRef.FromRgb(235, 240, 245);
         ColorRef askText = bidText;
+        ColorRef volumeColor = ColorRef.FromRgb(85, 115, 205);
+        ColorRef volumeText = bidText;
         ColorRef pocColor = ColorRef.FromRgb(240, 185, 65);
         if (style != null && style.name == "Deep Print" && style.XMLPropList != null)
         {
@@ -885,6 +898,7 @@ public class DeepLensProbe : Indicator
                 if (prop.Name == "PocBorderColor" && ColorRef.TryParse(raw, out var pc)) pocColor = pc;
                 if (prop.Name == "Background")
                 {
+                    if (ColorRef.TryParse(FindColor(raw, "FixedVolColor"), out var vc)) volumeColor = vc;
                     string bv = FindColor(raw, "FixedBidColor");
                     string av = FindColor(raw, "FixedAskColor");
                     rawBid = bv;
@@ -898,6 +912,7 @@ public class DeepLensProbe : Indicator
                 }
                 if (prop.Name == "Text")
                 {
+                    if (ColorRef.TryParse(FindColor(raw, "FixedVolColor"), out var vt)) volumeText = vt;
                     if (ColorRef.TryParse(FindColor(raw, "FixedBidColor"), out var bt)) bidText = bt;
                     if (ColorRef.TryParse(FindColor(raw, "FixedAskColor"), out var at)) askText = at;
                 }
@@ -909,10 +924,10 @@ public class DeepLensProbe : Indicator
             + $"AutoGrouping={autoGrouping} ManualTicks={manualTicks} GroupMode={groupMode}\n"
             + $"FilterMin={filterMin} FilterMax={filterMax} Proportion={proportion}\n"
             + $"Candle style={outsideStyle} Alignment={markerAlignment} Width={markerWidth}\n"
-            + "DELTA / PROFILE source | native shapes experiment";
-        // Comparison only: user-selected source is Delta / Volume / Manual / Fixed.
-        // Do not render filtered or non-volume data as if it were verified.
-        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType != 2 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
+            + "PROFILE source | Volume / Bid-Ask / Delta / Delta+Volume";
+        // Profile renderer: FootType follows the Deep Print dropdown order (0..3).
+        // Do not render filtered or non-volume input data as if it were verified.
+        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType < 0 || footType > 3 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
             label.Visible = true;
@@ -920,7 +935,7 @@ public class DeepLensProbe : Indicator
                 ? "DeepLens - add Deep Print to this chart"
                 : "DeepLens - unsupported Deep Print settings (see actual / expected)";
             settingsStatus.Visible = true;
-            settingsStatus.Text += "\nExpected: FootType=2 ShowStyle=1 InputData=0"
+            settingsStatus.Text += "\nExpected: FootType=0..3 ShowStyle=1 InputData=0"
                 + "\nAutoGrouping=1 ManualTicks=1..10000 GroupMode=0"
                 + "\nFilterMin=0 FilterMax=0 Proportion=0 (Bar relative)";
             return;
@@ -1007,11 +1022,14 @@ public class DeepLensProbe : Indicator
         double preferredStep = .027 * zoom;
         int preferredFont = Math.Max(6, Math.Min(24, (int)Math.Round(sourceFont * zoom)));
         // Fit the active page and its label allowance inside the chosen width.
+        bool dualProfile = footType == 1 || footType == 3;
+        double baseStride = dualProfile ? .23 : .13;
+        double baseTail = dualProfile ? .185 : .085;
         double horizontalZoom = FitZoom(compactScale,
-            panelWidth / (.028 + (columns - 1) * .13 + .05 + .035), Zoom);
-        double stride = .13 * horizontalZoom;
-        double profileWidth = .05 * horizontalZoom;
-        double askOffset = .036 * horizontalZoom;
+            panelWidth / (.028 + (columns - 1) * baseStride + baseTail), Zoom);
+        double stride = baseStride * horizontalZoom;
+        double profileWidth = (dualProfile ? .073 : .05) * horizontalZoom;
+        double secondOffset = .093 * horizontalZoom;
         double left = panelLeft + .028 * horizontalZoom;
         int high = int.MinValue, low = int.MaxValue;
         bool anyVbp = false;
@@ -1068,13 +1086,16 @@ public class DeepLensProbe : Indicator
         int font = Math.Max(6, (int)Math.Round(preferredFont * step / preferredStep));
         int labelStride = Math.Max(1, (int)Math.Ceiling((font + 1.0) / (preferredFont + 1.0) * preferredStep / step));
         nativeLabelStep = step;
-        nativeLabelWidth = Math.Min(stride, panelLeft + panelWidth - (left + (columns - 1) * stride));
+        nativeLabelWidth = dualProfile
+            ? Math.Min(secondOffset, panelLeft + panelWidth - (left + (columns - 1) * stride + secondOffset))
+            : Math.Min(stride, panelLeft + panelWidth - (left + (columns - 1) * stride));
         nativeLabelPreferredFont = Math.Clamp(preferredFont + 1, 6, 25);
         nativeLabelFallbackFont = Math.Min(25, font + 1);
         nativeLabelFallbackStride = labelStride;
         bool profileLimited = false;
         ClearRows();
-        label.Text = $"DeepLens v0.6.27 | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        string footName = footType == 0 ? "VOLUME" : footType == 1 ? "BID | ASK" : footType == 2 ? "DELTA" : "DELTA | VOLUME";
+        label.Text = $"DeepLens v0.6.28 | {footName} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
         modeLabel.X = panelLeft;
@@ -1158,11 +1179,20 @@ public class DeepLensProbe : Indicator
                 levels.TryGetValue(k, out var old);
                 levels[k] = (old.Bid + level.BidVol, old.Ask + level.AskVol, old.Total + level.TotVol);
             }
-            long deltaScale = 1, scale = 1;
-            foreach (var value in levels.Values)
+            long deltaScale = 1, scale = 1, sideScale = 1;
+            int pocRow = -1;
+            long groupedPocVolume = -1;
+            foreach (var pair in levels)
             {
+                var value = pair.Value;
                 deltaScale = Math.Max(deltaScale, Math.Abs(value.Ask - value.Bid));
                 scale = Math.Max(scale, value.Total);
+                sideScale = Math.Max(sideScale, Math.Max(value.Bid, value.Ask));
+                if (value.Total > groupedPocVolume)
+                {
+                    groupedPocVolume = value.Total;
+                    pocRow = pair.Key;
+                }
             }
             int sampleStride = Math.Max(1, (int)Math.Ceiling(levels.Count / (double)MaxRows));
             profileLimited |= sampleStride > 1;
@@ -1176,62 +1206,90 @@ public class DeepLensProbe : Indicator
                 EnsureRow(c, rowSlot);
                 var b = bidLabels[c,rowSlot];
                 var a = askLabels[c,rowSlot];
-                b.X = x;
-                a.X = x + askOffset;
-                b.Y = a.Y = rowOrigin + k * step;
-                b.FontSize = font;
-                a.FontSize = Math.Min(25, font + 1);
-                int red = (int)(120.0 * entry.Value.Bid / scale);
-                int green = (int)(120.0 * entry.Value.Ask / scale);
-                if (inherited)
+                long d = entry.Value.Ask - entry.Value.Bid;
+                bool isPoc = enablePoc && k == pocRow;
+                byte alpha = (byte)(255 * Math.Clamp(opacity, 0, 100) / 100);
+                ColorRef transparent = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
+                ColorRef deltaColor = d < 0 ? bidColor : askColor;
+                ColorRef deltaText = d < 0 ? bidText : askText;
+                long firstValue = footType == 0 ? entry.Value.Total : footType == 1 ? entry.Value.Bid : d;
+                long firstScale = footType == 0 ? scale : footType == 1 ? sideScale : deltaScale;
+                ColorRef firstColor = (footType == 0 ? volumeColor : footType == 1 ? bidColor : deltaColor).WithOpacity(alpha);
+                ColorRef firstText = footType == 0 ? volumeText : footType == 1 ? bidText : deltaText;
+                long secondValue = footType == 1 ? entry.Value.Ask : entry.Value.Total;
+                long secondScale = footType == 1 ? sideScale : scale;
+                ColorRef secondColor = (footType == 1 ? askColor : volumeColor).WithOpacity(alpha);
+                ColorRef secondText = footType == 1 ? askText : volumeText;
+                double rowY = rowOrigin + k * step;
+                double topY = rowY - step * .5, bottomY = rowY + step * .5;
+
+                if (NativeShapes)
                 {
-                    byte alpha = (byte)(255 * Math.Max(0, Math.Min(100, opacity)) / 100);
-                    b.BackColor = bidColor.WithOpacity(alpha);
-                    a.BackColor = askColor.WithOpacity(alpha);
+                    if (firstValue != 0 || isPoc)
+                    {
+                        var rect = profileRects[c,rowSlot];
+                        double width = profileWidth * Math.Abs(firstValue) / firstScale;
+                        if (isPoc) width = Math.Max(width, profileWidth * .03);
+                        projected.Add((rect, x, x + width, topY, bottomY, 0, 0, false));
+                        rect.BackColor = firstColor;
+                        rect.LineColor = isPoc ? pocColor : firstColor;
+                        rect.LineWidth = isPoc ? pocWidth : 0;
+                        rect.Visible = false;
+                    }
+                    if (dualProfile && (secondValue != 0 || isPoc))
+                    {
+                        var rect = secondaryRects[c,rowSlot];
+                        if (rect == null)
+                        {
+                            rect = MakeShape(AnnotationType.Rectangle);
+                            secondaryRects[c,rowSlot] = rect;
+                        }
+                        double width = profileWidth * Math.Abs(secondValue) / secondScale;
+                        if (isPoc) width = Math.Max(width, profileWidth * .03);
+                        projected.Add((rect, x + secondOffset, x + secondOffset + width,
+                            topY, bottomY, 0, 0, false));
+                        rect.BackColor = secondColor;
+                        rect.LineColor = isPoc ? pocColor : secondColor;
+                        rect.LineWidth = isPoc ? pocWidth : 0;
+                        rect.Visible = false;
+                    }
+                    // For paired views each sub-column gets an independent label stride.
+                    // ProjectShapes visits labels in row order; the label key tracks each side.
+                    ConfigureValueLabel(a, firstValue, firstText, transparent, font);
+                    if (showZero || firstValue != 0)
+                        projectedLabels.Add((a, x, rowY, c * 2, k));
+                    if (dualProfile)
+                    {
+                        ConfigureValueLabel(b, secondValue, secondText, transparent, font);
+                        if (showZero || secondValue != 0)
+                            projectedLabels.Add((b, x + secondOffset, rowY, c * 2 + 1, k));
+                    }
                 }
                 else
                 {
-                    b.BackColor = ColorRef.FromRgb((byte)Math.Min(255, 55 + red), 30, 40);
-                    a.BackColor = ColorRef.FromRgb(24, (byte)Math.Min(255, 55 + green), 45);
+                    // Legacy text preview is retained for the native-shapes diagnostic toggle.
+                    b.CoordinateXType = b.CoordinateYType = CoordinateTypeEnum.Relative;
+                    b.X = x;
+                    b.Y = rowY;
+                    b.FontSize = font;
+                    b.FontBold = false;
+                    int blocks = firstValue == 0 ? 0 : Math.Max(1, (int)Math.Round(5.0 * Math.Abs(firstValue) / firstScale));
+                    b.Text = blocks == 0 ? "" : new string('█', blocks);
+                    b.ForeColor = firstColor;
+                    b.BackColor = b.LineColor = transparent;
+                    b.LineWidth = 0;
+                    b.Visible = blocks > 0;
+                    ConfigureValueLabel(a, firstValue, firstText, transparent, font);
+                    a.CoordinateXType = a.CoordinateYType = CoordinateTypeEnum.Relative;
+                    a.X = x;
+                    a.Y = rowY;
+                    if (dualProfile) a.Text = $"{firstValue} | {secondValue}";
+                    bool eligible = showZero || firstValue != 0 || (dualProfile && secondValue != 0);
+                    a.Visible = eligible && (lastLabelRow == int.MinValue || (long)k - lastLabelRow >= labelStride);
+                    if (a.Visible) lastLabelRow = k;
+                    a.LineColor = isPoc ? pocColor : transparent;
+                    a.LineWidth = isPoc ? pocWidth : 0;
                 }
-                b.ForeColor = bidText;
-                a.ForeColor = askText;
-                bool isPoc = enablePoc && poc[c] <= top && (top - poc[c]) / group == k;
-                b.LineColor = a.LineColor = isPoc ? pocColor : ColorRef.FromRgb(65,75,85);
-                b.LineWidth = a.LineWidth = isPoc ? pocWidth : borderWidth;
-                long d = entry.Value.Ask - entry.Value.Bid;
-                int blocks = d == 0 ? 0 : Math.Max(1, (int)Math.Round(5.0 * Math.Abs(d) / deltaScale));
-                ColorRef profileColor = (d < 0 ? bidColor : askColor).WithOpacity((byte)(255 * Math.Max(0, Math.Min(100, opacity)) / 100));
-                b.Text = blocks == 0 ? "" : new string('█', blocks);
-                b.ForeColor = profileColor;
-                b.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
-                b.LineColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
-                b.LineWidth = 0;
-                b.Visible = !NativeShapes && blocks > 0;
-                if (NativeShapes && d != 0)
-                {
-                    var rect = profileRects[c,rowSlot];
-                    projected.Add((rect, x, x + profileWidth * Math.Abs(d) / deltaScale,
-                        rowOrigin + (k - .5) * step, rowOrigin + (k + .5) * step, 0, 0, false));
-                    rect.BackColor = profileColor;
-                    rect.LineColor = isPoc ? pocColor : profileColor;
-                    rect.LineWidth = isPoc ? pocWidth : 0;
-                    rect.Visible = false;
-                }
-                a.CoordinateXType = a.CoordinateYType = CoordinateTypeEnum.Relative;
-                a.X = x;
-                bool eligibleLabel = showZero || d != 0;
-                bool showLabel = !NativeShapes && eligibleLabel &&
-                    (lastLabelRow == int.MinValue || (long)k - lastLabelRow >= labelStride);
-                if (showLabel) lastLabelRow = k;
-                if (NativeShapes && eligibleLabel)
-                    projectedLabels.Add((a, x, rowOrigin + k * step, c, k));
-                a.Text = !showZero && d == 0 ? "" : $"{d}";
-                a.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
-                a.ForeColor = d < 0 ? bidText : askText;
-                a.LineColor = isPoc && !NativeShapes ? pocColor : ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
-                a.LineWidth = isPoc && !NativeShapes ? pocWidth : 0;
-                a.Visible = showLabel;
             }
         }
         if (profileLimited)
