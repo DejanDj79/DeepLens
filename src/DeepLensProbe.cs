@@ -55,7 +55,9 @@ public class DeepLensProbe : Indicator
     public bool NativeShapes { get; set; } = true;
 
     private readonly List<(IAnnotation Shape, double X1, double X2, double Y1, double Y2, double Y3, double Close, bool Candle)> projected = new();
-    private readonly List<(IAnnotation Label, double X, double Y)> projectedLabels = new();
+    private readonly List<(IAnnotation Label, double X, double Y, int Column, int Row)> projectedLabels = new();
+    private double nativeLabelStep, nativeLabelWidth;
+    private int nativeLabelPreferredFont, nativeLabelFallbackFont, nativeLabelFallbackStride;
     [Category("Layout")]
     [DisplayName("Show panel background")]
     public bool ShowPanelBackground { get; set; } = true;
@@ -210,14 +212,55 @@ public class DeepLensProbe : Indicator
             }
             p.Shape.Visible = true;
         }
+        // Actual area dimensions are available on desktop, including after a chart resize.
+        // Use a conservative text-size estimate, not the previous chart-relative font formula.
+        double pixelWidth = 0, pixelHeight = 0;
+        try
+        {
+            var measures = VAn.GetChartAreaMeasures(ChartAreaRef.Main);
+            pixelWidth = measures.PixelWidth;
+            pixelHeight = measures.PixelHeight;
+        }
+        catch (System.NotSupportedException) { }
+        catch (System.NotImplementedException) { }
+        bool pixelFit = double.IsFinite(pixelWidth) && double.IsFinite(pixelHeight) &&
+            pixelWidth > 0 && pixelHeight > 0 && nativeLabelStep > 0 && nativeLabelWidth > 0;
+        double rowPixels = nativeLabelStep * pixelHeight;
+        double columnPixels = nativeLabelWidth * pixelWidth;
+        int fontSize = nativeLabelFallbackFont;
+        int strideRows = nativeLabelFallbackStride;
+        if (pixelFit)
+        {
+            fontSize = Math.Clamp((int)Math.Floor(rowPixels / 1.5), 6, nativeLabelPreferredFont);
+            // Preserve one common font for every candle; reserve horizontal room for the longest number.
+            int maxChars = 1;
+            foreach (var p in projectedLabels)
+                maxChars = Math.Max(maxChars, p.Label.Text.Length);
+            fontSize = Math.Clamp((int)Math.Floor((columnPixels - 2) / maxChars), 6, fontSize);
+            strideRows = (int)Math.Min(int.MaxValue, Math.Max(1, Math.Ceiling(fontSize * 1.5 / rowPixels)));
+        }
+        int lastColumn = -1, lastRow = int.MinValue;
         foreach (var p in projectedLabels)
         {
+            if (p.Column != lastColumn)
+            {
+                lastColumn = p.Column;
+                lastRow = int.MinValue;
+            }
             p.Label.CoordinateXType = CoordinateTypeEnum.Absolute;
             p.Label.CoordinateYType = CoordinateTypeEnum.Absolute;
             p.Label.UseAxisWithSpace = false;
             p.Label.X = X(p.X);
-            p.Label.Y = Y(p.Y);
+            // Center labels vertically on their footprint row when pixel dimensions are available.
+            p.Label.Y = Y(pixelFit ? p.Y - fontSize * .75 / pixelHeight : p.Y - nativeLabelStep * .35);
+            p.Label.FontSize = fontSize;
+            bool widthFits = !pixelFit || p.Label.Text.Length * fontSize + 2 <= columnPixels;
+            bool show = widthFits && (lastRow == int.MinValue || (long)p.Row - lastRow >= strideRows);
+            p.Label.Visible = show;
+            if (show) lastRow = p.Row;
         }
+        if (pixelFit)
+            projectionStatus.Text += $"\nArea: {pixelWidth:0} x {pixelHeight:0} px | row {rowPixels:0.0}px | font {fontSize} | stride {strideRows}";
         if (projected.Count > 0)
         {
             var p = projected[0];
@@ -236,7 +279,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.25";
+        Description = "DeepLens v0.6.26";
     }
 
     public override void OnInit()
@@ -282,7 +325,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.25 - waiting";
+        label.Text = "DeepLens v0.6.26 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -520,6 +563,52 @@ public class DeepLensProbe : Indicator
                 panelHidden = !panelHidden;
                 NeedRecalculate = true;
             }, true);
+
+        bool layoutEnabled = !panelHidden;
+        VAn.AddMenuItem(this, "DeepLens: center panel horizontally here", MovePanelHere,
+            layoutEnabled && valid, barIndex);
+        VAn.AddMenuItem(this, "DeepLens: move panel up", (a,b,p) => AdjustLayout(0,-10,0,0,0),
+            layoutEnabled && PanelY > 0);
+        VAn.AddMenuItem(this, "DeepLens: move panel down", (a,b,p) => AdjustLayout(0,10,0,0,0),
+            layoutEnabled && PanelY < 100 - Math.Clamp(PanelHeight,20,95));
+        VAn.AddMenuItem(this, "DeepLens: wider panel", (a,b,p) => AdjustLayout(0,0,10,0,0),
+            layoutEnabled && PanelWidth < 95);
+        VAn.AddMenuItem(this, "DeepLens: narrower panel", (a,b,p) => AdjustLayout(0,0,-10,0,0),
+            layoutEnabled && PanelWidth > 18);
+        VAn.AddMenuItem(this, "DeepLens: taller panel", (a,b,p) => AdjustLayout(0,0,0,10,0),
+            layoutEnabled && PanelHeight < 95);
+        VAn.AddMenuItem(this, "DeepLens: shorter panel", (a,b,p) => AdjustLayout(0,0,0,-10,0),
+            layoutEnabled && PanelHeight > 20);
+        VAn.AddMenuItem(this, "DeepLens: zoom in", (a,b,p) => AdjustLayout(0,0,0,0,10),
+            layoutEnabled && Zoom < 180);
+        VAn.AddMenuItem(this, "DeepLens: zoom out", (a,b,p) => AdjustLayout(0,0,0,0,-10),
+            layoutEnabled && Zoom > 60);
+        VAn.AddMenuItem(this, "DeepLens: reset layout", (a,b,p) =>
+        {
+            PanelX = 8; PanelY = 12; PanelWidth = 28; PanelHeight = 70; Zoom = 100;
+            NeedRecalculate = true;
+        }, layoutEnabled);
+    }
+
+    private void AdjustLayout(int dx, int dy, int dw, int dh, int dz)
+    {
+        PanelWidth = Math.Clamp(PanelWidth + dw, 18, 95);
+        PanelHeight = Math.Clamp(PanelHeight + dh, 20, 95);
+        PanelX = Math.Clamp(PanelX + dx, 0, 100 - PanelWidth);
+        PanelY = Math.Clamp(PanelY + dy, 0, 100 - PanelHeight);
+        Zoom = Math.Clamp(Zoom + dz, 60, 180);
+        NeedRecalculate = true;
+    }
+
+    private void MovePanelHere(ChartAreaRef? area, int? barIndex, object param)
+    {
+        if (!(param is int i) || AxisX == null) return;
+        double min = AxisX.ViewMinimum, max = AxisX.ViewMaximum;
+        if (!double.IsFinite(min) || !double.IsFinite(max) || max <= min) return;
+        int width = Math.Clamp(PanelWidth, 18, 95);
+        double fraction = Math.Clamp((i + 1.0 - min) / (max - min), 0, 1);
+        PanelX = Math.Clamp((int)Math.Round(fraction * 100 - width * .5), 0, 100 - width);
+        AdjustLayout(0,0,0,0,0);
     }
 
     private void ResumeLive(ChartAreaRef? area, int? barIndex, object param)
@@ -663,7 +752,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.25 - parameter inspector";
+            label.Text = "DeepLens v0.6.26 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -966,9 +1055,14 @@ public class DeepLensProbe : Indicator
         double TickToPanelY(double tick) => rowOrigin + (top - tick) * step / group;
         int font = Math.Max(6, (int)Math.Round(preferredFont * step / preferredStep));
         int labelStride = Math.Max(1, (int)Math.Ceiling((font + 1.0) / (preferredFont + 1.0) * preferredStep / step));
+        nativeLabelStep = step;
+        nativeLabelWidth = Math.Min(stride, panelLeft + panelWidth - (left + (columns - 1) * stride));
+        nativeLabelPreferredFont = Math.Clamp(preferredFont + 1, 6, 25);
+        nativeLabelFallbackFont = Math.Min(25, font + 1);
+        nativeLabelFallbackStride = labelStride;
         bool profileLimited = false;
         ClearRows();
-        label.Text = $"DeepLens v0.6.25 | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.26 | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
         modeLabel.X = panelLeft;
@@ -1114,14 +1208,12 @@ public class DeepLensProbe : Indicator
                 }
                 a.CoordinateXType = a.CoordinateYType = CoordinateTypeEnum.Relative;
                 a.X = x;
-                bool showLabel = (showZero || d != 0) &&
+                bool eligibleLabel = showZero || d != 0;
+                bool showLabel = !NativeShapes && eligibleLabel &&
                     (lastLabelRow == int.MinValue || (long)k - lastLabelRow >= labelStride);
-                if (showLabel)
-                {
-                    lastLabelRow = k;
-                    if (NativeShapes)
-                        projectedLabels.Add((a, x, rowOrigin + (k - .35) * step));
-                }
+                if (showLabel) lastLabelRow = k;
+                if (NativeShapes && eligibleLabel)
+                    projectedLabels.Add((a, x, rowOrigin + k * step, c, k));
                 a.Text = !showZero && d == 0 ? "" : $"{d}";
                 a.BackColor = ColorRef.FromRgb(0, 0, 0).WithOpacity(0);
                 a.ForeColor = d < 0 ? bidText : askText;
