@@ -4,6 +4,7 @@ using VolumetricaAPI.Chart;
 using VolumetricaControls;
 using VolumetricaCore;
 using static VolSysAPI.ExternalStructure;
+using static VolSysAPI.Structure;
 
 namespace DeepLens;
 
@@ -14,7 +15,7 @@ public class DeepLensProbe : Indicator
         return new IndicatorDescriptionBase
         {
             Name = "DeepLens Probe",
-            Description = "Three-bar live footprint test.",
+            Description = "Three-bar live Renko 30|1 footprint preview.",
             Tags = new List<string> { "Utility" }
         };
     }
@@ -79,6 +80,8 @@ public class DeepLensProbe : Indicator
     [VolCustom(MinValue = 20, MaxValue = 95, IncrementValue = 1)]
     public int PanelHeight { get; set; } = 70;
 
+    private ResolutionData renko;
+    private int renkoFilterIndex = -1;
     private IAnnotation panelBackground;
     private IAnnotation settingsStatus;
     private IAnnotation projectionStatus;
@@ -186,7 +189,17 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.21";
+        Description = "DeepLens v0.6.22";
+    }
+
+    public override void OnInit()
+    {
+        // Independent tick-built bars for the same instrument, regardless of the main chart resolution.
+        // Request on every initialization, before the platform prepares its history.
+        renko = VAn.RequestResolution(ChartResolutionInfo.ParamTypeEnum.Renko, 30, 1,
+            null, false);
+        renkoFilterIndex = renko == null ? -1 :
+            renko.AddNewFilter(0, 0, DataInputTypeEnum.Volume, VbpType.Bar, 0, true);
     }
 
     public override void OnLoad()
@@ -216,7 +229,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.21 - waiting";
+        label.Text = "DeepLens v0.6.22 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -378,7 +391,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.21 - parameter inspector";
+            label.Text = "DeepLens v0.6.22 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -540,20 +553,27 @@ public class DeepLensProbe : Indicator
                 + "\nFilterMin=0 FilterMax=0 Proportion=0 (Bar relative)";
             return;
         }
-        var bars = VAn.BarVars;
+        if (renko == null || !renko.HasBar || renkoFilterIndex < 0)
+        {
+            ClearRows();
+            label.Visible = true;
+            label.Text = "DeepLens - waiting for Renko 30|1 / VBP resolution";
+            return;
+        }
+        var bars = renko.BarVars;
         if (bars == null || bars.Count == 0)
         {
             ClearRows();
             label.Visible = true;
-            label.Text = "DeepLens v0.6.21 - waiting for bars";
+            label.Text = "DeepLens - waiting for Renko 30|1 bars";
             return;
         }
-        int end = VAn.BarIndex;
+        int end = renko.BarIndex;
         if (end < 0 || end >= bars.Count)
         {
             ClearRows();
             label.Visible = true;
-            label.Text = "DeepLens - waiting for a valid bar index";
+            label.Text = "DeepLens - waiting for a valid Renko bar index";
             return;
         }
 
@@ -594,8 +614,8 @@ public class DeepLensProbe : Indicator
             if (bar.VbpListAll == null) continue;
             foreach (var entries in bar.VbpListAll.SortedLHValues)
             {
-                if (entries == null || entries.Length == 0 || entries[0] == null) continue;
-                var level = entries[0];
+                if (entries == null || renkoFilterIndex >= entries.Length || entries[renkoFilterIndex] == null) continue;
+                var level = entries[renkoFilterIndex];
                 high = Math.Max(high, level.PinT);
                 low = Math.Min(low, level.PinT);
                 anyVbp = true;
@@ -612,7 +632,7 @@ public class DeepLensProbe : Indicator
         {
             ClearRows();
             label.Visible = true;
-            label.Text = "DeepLens - no VBP data for the last three bars";
+            label.Text = "DeepLens - no VBP data for the last three Renko 30|1 bars";
             return;
         }
 
@@ -632,7 +652,7 @@ public class DeepLensProbe : Indicator
         int labelStride = Math.Max(1, (int)Math.Ceiling((font + 1.0) / (preferredFont + 1.0) * preferredStep / step));
         bool profileLimited = false;
         ClearRows();
-        label.Text = $"DeepLens v0.6.21 | DELTA PROFILE TEST | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.22 | RENKO 30|1 | DELTA PROFILE | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
 
@@ -707,8 +727,8 @@ public class DeepLensProbe : Indicator
             var levels = new SortedDictionary<int, (long Bid, long Ask, long Total)>();
             foreach (var entries in bar.VbpListAll.SortedLHValues)
             {
-                if (entries == null || entries.Length == 0 || entries[0] == null) continue;
-                var level = entries[0];
+                if (entries == null || renkoFilterIndex >= entries.Length || entries[renkoFilterIndex] == null) continue;
+                var level = entries[renkoFilterIndex];
                 int k = (int)(((long)top - level.PinT) / group);
                 if (k < 0 || k >= visibleRows) continue;
                 levels.TryGetValue(k, out var old);
