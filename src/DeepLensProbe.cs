@@ -37,6 +37,10 @@ public class DeepLensProbe : Indicator
     public int InspectIndex { get; set; } = 2;
 
     [Category("Deep Print diagnostic")]
+    [DisplayName("Use only selected Deep Print index")]
+    public bool StrictSourceIndex { get; set; } = false;
+
+    [Category("Deep Print diagnostic")]
     [DisplayName("Show all parameters")]
     public bool ShowAllParameters { get; set; } = false;
 
@@ -282,7 +286,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.29";
+        Description = "DeepLens v0.6.30";
     }
 
     public override void OnInit()
@@ -329,7 +333,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.29 - waiting";
+        label.Text = "DeepLens v0.6.30 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -460,6 +464,11 @@ public class DeepLensProbe : Indicator
             resolvedSourceIndex = -1;
         }
         var requested = TryGetParams(InspectIndex);
+        if (StrictSourceIndex)
+        {
+            resolvedSourceIndex = requested != null && requested.name == "Deep Print" ? InspectIndex : -1;
+            return resolvedSourceIndex >= 0 ? requested : null;
+        }
         if (IsSupportedSource(requested))
         {
             resolvedSourceIndex = InspectIndex;
@@ -548,6 +557,7 @@ public class DeepLensProbe : Indicator
         VAn.AddMenuItem(this, "DeepLens: Live Follow", ResumeLive, true);
         VAn.AddMenuItem(this, $"DeepLens: Refresh Deep Print (index {lastReadSourceIndex}, type {lastReadFootType})",
             RefreshDeepPrint, true);
+        AddSourceMenuItems();
         VAn.AddMenuItem(this, "DeepLens: previous page", (a,b,p) =>
         {
             ZonePage = Math.Max(0, activeZonePage - 1);
@@ -638,6 +648,66 @@ public class DeepLensProbe : Indicator
         double fraction = Math.Clamp((i + 1.0 - min) / (max - min), 0, 1);
         PanelX = Math.Clamp((int)Math.Round(fraction * 100 - width * .5), 0, 100 - width);
         AdjustLayout(0,0,0,0,0);
+    }
+
+    private void AddSourceMenuItems()
+    {
+        // Read the SDK directly when the context menu opens, not the previous OnEnd snapshot.
+        int found = 0;
+        try
+        {
+            for (int i = 0; i <= 50; i++)
+            {
+                var source = TryGetParams(i);
+                if (source == null || source.name != "Deep Print") continue;
+                found++;
+                string type = "?", mode = "?";
+                int count = 0;
+                if (source.XMLPropList != null)
+                {
+                    count = source.XMLPropList.Count;
+                    foreach (var prop in source.XMLPropList)
+                    {
+                        if (prop.Value == null) continue;
+                        if (prop.Name == "FootType") type = prop.Value.ToString();
+                        if (prop.Name == "ShowStyle") mode = prop.Value.ToString();
+                    }
+                }
+                string marker = StrictSourceIndex && InspectIndex == i ? " [LOCKED]" :
+                    lastReadSourceIndex == i ? " [RENDERED]" : "";
+                string status = $"DeepLens: source #{i} | Type={type} Mode={mode} Params={count}{marker}";
+                VAn.AddMenuItem(this, status, SelectDeepPrintSource, true, i);
+            }
+        }
+        catch (System.NotSupportedException)
+        {
+            VAn.AddMenuItem(this, "DeepLens: source scan unavailable in context menu", (a,b,p) => {}, false);
+            return;
+        }
+        catch (System.NotImplementedException)
+        {
+            VAn.AddMenuItem(this, "DeepLens: source scan unavailable in context menu", (a,b,p) => {}, false);
+            return;
+        }
+        if (found == 0)
+            VAn.AddMenuItem(this, "DeepLens: no Deep Print found in source scan", (a,b,p) => {}, false);
+        VAn.AddMenuItem(this, "DeepLens: automatic source selection", (a,b,p) =>
+        {
+            StrictSourceIndex = false;
+            resolvedSourceIndex = -1;
+            lastRequestedIndex = -1;
+            NeedRecalculate = true;
+        }, StrictSourceIndex);
+    }
+
+    private void SelectDeepPrintSource(ChartAreaRef? area, int? barIndex, object param)
+    {
+        if (!(param is int i) || i < 0 || i > 50) return;
+        InspectIndex = i;
+        StrictSourceIndex = true;
+        resolvedSourceIndex = -1;
+        lastRequestedIndex = -1;
+        NeedRecalculate = true;
     }
 
     private void RefreshDeepPrint(ChartAreaRef? area, int? barIndex, object param)
@@ -792,7 +862,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.29 - parameter inspector";
+            label.Text = "DeepLens v0.6.30 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -1124,7 +1194,7 @@ public class DeepLensProbe : Indicator
         bool profileLimited = false;
         ClearRows();
         string footName = footType == 0 ? "VOLUME" : footType == 1 ? "BID | ASK" : footType == 2 ? "DELTA" : "DELTA | VOLUME";
-        label.Text = $"DeepLens v0.6.29 | {footName} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.30 | {footName} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
         modeLabel.X = panelLeft;
