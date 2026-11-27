@@ -136,6 +136,11 @@ public class DeepLensProbe : Indicator
     private int resizeCalls;
     private int resolvedSourceIndex = -1;
     private int lastRequestedIndex = -1;
+    private int lastReadFootType = -1;
+    private int lastReadSourceIndex = -1;
+    private int lastReadRevision;
+    private bool refreshSourceRequested;
+    private string refreshResult = "";
     private readonly IAnnotation[,] profileRects = new IAnnotation[MaxColumns, MaxRows];
     private readonly IAnnotation[,] secondaryRects = new IAnnotation[MaxColumns, MaxRows];
     private readonly IAnnotation[] nativeCandles = new IAnnotation[MaxColumns];
@@ -277,7 +282,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.28";
+        Description = "DeepLens v0.6.29";
     }
 
     public override void OnInit()
@@ -324,7 +329,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.28 - waiting";
+        label.Text = "DeepLens v0.6.29 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -541,6 +546,8 @@ public class DeepLensProbe : Indicator
         VAn.AddMenuItem(this, "DeepLens: start zone", MarkZoneStart, valid, barIndex);
         VAn.AddMenuItem(this, "DeepLens: finish zone", MarkZoneEnd, valid && menuStartTime.HasValue, barIndex);
         VAn.AddMenuItem(this, "DeepLens: Live Follow", ResumeLive, true);
+        VAn.AddMenuItem(this, $"DeepLens: Refresh Deep Print (index {lastReadSourceIndex}, type {lastReadFootType})",
+            RefreshDeepPrint, true);
         VAn.AddMenuItem(this, "DeepLens: previous page", (a,b,p) =>
         {
             ZonePage = Math.Max(0, activeZonePage - 1);
@@ -631,6 +638,17 @@ public class DeepLensProbe : Indicator
         double fraction = Math.Clamp((i + 1.0 - min) / (max - min), 0, 1);
         PanelX = Math.Clamp((int)Math.Round(fraction * 100 - width * .5), 0, 100 - width);
         AdjustLayout(0,0,0,0,0);
+    }
+
+    private void RefreshDeepPrint(ChartAreaRef? area, int? barIndex, object param)
+    {
+        // Clear only the source selection cache; retain the zone, page and frozen view.
+        resolvedSourceIndex = -1;
+        lastRequestedIndex = -1;
+        refreshSourceRequested = true;
+        refreshResult = "Refresh requested";
+        NeedRecalculate = true;
+        VAn.SetFullRecalculation();
     }
 
     private void ResumeLive(ChartAreaRef? area, int? barIndex, object param)
@@ -774,7 +792,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.28 - parameter inspector";
+            label.Text = "DeepLens v0.6.29 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -918,13 +936,24 @@ public class DeepLensProbe : Indicator
                 }
             }
         }
+        if (refreshSourceRequested)
+        {
+            bool changed = lastReadSourceIndex != resolvedSourceIndex || lastReadRevision != revision;
+            refreshResult = $"Refresh: {(changed ? "changed" : "unchanged")} | index {lastReadSourceIndex} -> {resolvedSourceIndex} | type {lastReadFootType} -> {footType}";
+            refreshSourceRequested = false;
+            VAn.AddToLog("DeepLens: " + refreshResult, showToast: false);
+        }
+        lastReadFootType = footType;
+        lastReadSourceIndex = resolvedSourceIndex;
+        lastReadRevision = revision;
         settingsStatus.Visible = ShowDiagnostics;
         settingsStatus.Text = $"Index {resolvedSourceIndex} (requested {InspectIndex}): {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
             + $"FootType={footType} ShowStyle={showStyle} InputData={inputData}\n"
             + $"AutoGrouping={autoGrouping} ManualTicks={manualTicks} GroupMode={groupMode}\n"
             + $"FilterMin={filterMin} FilterMax={filterMax} Proportion={proportion}\n"
             + $"Candle style={outsideStyle} Alignment={markerAlignment} Width={markerWidth}\n"
-            + "PROFILE source | Volume / Bid-Ask / Delta / Delta+Volume";
+            + "PROFILE source | Volume / Bid-Ask / Delta / Delta+Volume"
+            + (refreshResult.Length == 0 ? "" : "\n" + refreshResult);
         // Profile renderer: FootType follows the Deep Print dropdown order (0..3).
         // Do not render filtered or non-volume input data as if it were verified.
         if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType < 0 || footType > 3 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
@@ -1095,7 +1124,7 @@ public class DeepLensProbe : Indicator
         bool profileLimited = false;
         ClearRows();
         string footName = footType == 0 ? "VOLUME" : footType == 1 ? "BID | ASK" : footType == 2 ? "DELTA" : "DELTA | VOLUME";
-        label.Text = $"DeepLens v0.6.28 | {footName} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.29 | {footName} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
         modeLabel.X = panelLeft;
