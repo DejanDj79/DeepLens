@@ -40,6 +40,21 @@ public class DeepLensProbe : Indicator
     [DisplayName("Use only selected Deep Print index")]
     public bool StrictSourceIndex { get; set; } = false;
 
+    [Category("Footprint override")]
+    [DisplayName("Type (-1 inherit, 0 Volume, 1 Bid/Ask, 2 Delta, 3 Delta+Volume)")]
+    [VolCustom(MinValue = -1, MaxValue = 3, IncrementValue = 1)]
+    public int TypeOverride { get; set; } = -1;
+
+    [Category("Footprint override")]
+    [DisplayName("Mode (-1 inherit, 0 Box, 1 Profile, 2 Mirror Profile)")]
+    [VolCustom(MinValue = -1, MaxValue = 2, IncrementValue = 1)]
+    public int ModeOverride { get; set; } = -1;
+
+    [Category("Footprint override")]
+    [DisplayName("Fixed ticks per row (0 inherit)")]
+    [VolCustom(MinValue = 0, MaxValue = 10000, IncrementValue = 1)]
+    public int FixedTicksOverride { get; set; } = 0;
+
     [Category("Deep Print diagnostic")]
     [DisplayName("Show all parameters")]
     public bool ShowAllParameters { get; set; } = false;
@@ -286,7 +301,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.30";
+        Description = "DeepLens v0.6.31";
     }
 
     public override void OnInit()
@@ -333,7 +348,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.30 - waiting";
+        label.Text = "DeepLens v0.6.31 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -452,7 +467,13 @@ public class DeepLensProbe : Indicator
             if (prop.Name == "FilterMax") max = value;
             if (prop.Name == "FootProportion") proportion = value;
         }
-        return type >= 0 && type <= 3 && mode == 1 && input == 0 && grouping == 1 &&
+        if (TypeOverride >= 0 && TypeOverride <= 3) type = TypeOverride;
+        if (ModeOverride >= 0 && ModeOverride <= 2) mode = ModeOverride;
+        if (FixedTicksOverride > 0 && FixedTicksOverride <= 10000)
+        {
+            grouping = 1; groupMode = 0; ticks = FixedTicksOverride;
+        }
+        return type >= 0 && type <= 3 && mode >= 0 && mode <= 2 && input == 0 && grouping == 1 &&
             groupMode == 0 && ticks >= 1 && ticks <= 10000 && min == 0 && max == 0 && proportion == 0;
     }
 
@@ -558,6 +579,7 @@ public class DeepLensProbe : Indicator
         VAn.AddMenuItem(this, $"DeepLens: Refresh Deep Print (index {lastReadSourceIndex}, type {lastReadFootType})",
             RefreshDeepPrint, true);
         AddSourceMenuItems();
+        AddFootprintMenuItems();
         VAn.AddMenuItem(this, "DeepLens: previous page", (a,b,p) =>
         {
             ZonePage = Math.Max(0, activeZonePage - 1);
@@ -649,6 +671,36 @@ public class DeepLensProbe : Indicator
         PanelX = Math.Clamp((int)Math.Round(fraction * 100 - width * .5), 0, 100 - width);
         AdjustLayout(0,0,0,0,0);
     }
+
+    private void AddFootprintMenuItems()
+    {
+        // Type and display mode can be changed independently of the SDK snapshot.
+        VAn.AddMenuItem(this, "DeepLens: Type - " + TypeName(TypeOverride) + " (next)",
+            (a,b,p) =>
+            {
+                TypeOverride = TypeOverride >= 3 ? -1 : TypeOverride + 1;
+                NeedRecalculate = true;
+            }, !panelHidden);
+        VAn.AddMenuItem(this, "DeepLens: Mode - " + ModeName(ModeOverride) + " (next)",
+            (a,b,p) =>
+            {
+                ModeOverride = ModeOverride >= 2 ? -1 : ModeOverride + 1;
+                NeedRecalculate = true;
+            }, !panelHidden);
+        VAn.AddMenuItem(this, "DeepLens: Reset footprint to Deep Print",
+            (a,b,p) =>
+            {
+                TypeOverride = -1; ModeOverride = -1; FixedTicksOverride = 0;
+                NeedRecalculate = true;
+            }, TypeOverride != -1 || ModeOverride != -1 || FixedTicksOverride != 0);
+    }
+
+    private static string TypeName(int type) =>
+        type == 0 ? "Volume" : type == 1 ? "Bid/Ask" :
+        type == 2 ? "Delta" : type == 3 ? "Delta+Volume" : "Inherit";
+
+    private static string ModeName(int mode) =>
+        mode == 0 ? "Box" : mode == 1 ? "Profile" : mode == 2 ? "Mirror Profile" : "Inherit";
 
     private void AddSourceMenuItems()
     {
@@ -862,7 +914,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.30 - parameter inspector";
+            label.Text = "DeepLens v0.6.31 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -1016,17 +1068,25 @@ public class DeepLensProbe : Indicator
         lastReadFootType = footType;
         lastReadSourceIndex = resolvedSourceIndex;
         lastReadRevision = revision;
+        int sourceFootType = footType, sourceShowStyle = showStyle;
+        if (TypeOverride >= 0 && TypeOverride <= 3) footType = TypeOverride;
+        if (ModeOverride >= 0 && ModeOverride <= 2) showStyle = ModeOverride;
+        if (FixedTicksOverride > 0 && FixedTicksOverride <= 10000)
+        {
+            autoGrouping = 1; groupMode = 0; manualTicks = FixedTicksOverride;
+        }
         settingsStatus.Visible = ShowDiagnostics;
         settingsStatus.Text = $"Index {resolvedSourceIndex} (requested {InspectIndex}): {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
             + $"FootType={footType} ShowStyle={showStyle} InputData={inputData}\n"
             + $"AutoGrouping={autoGrouping} ManualTicks={manualTicks} GroupMode={groupMode}\n"
             + $"FilterMin={filterMin} FilterMax={filterMax} Proportion={proportion}\n"
             + $"Candle style={outsideStyle} Alignment={markerAlignment} Width={markerWidth}\n"
-            + "PROFILE source | Volume / Bid-Ask / Delta / Delta+Volume"
+            + $"SDK Type={sourceFootType} Mode={sourceShowStyle} | Effective {TypeName(footType)} / {ModeName(showStyle)}"
+            + $"\nOverride: Type={TypeName(TypeOverride)} Mode={ModeName(ModeOverride)} FixedTicks={FixedTicksOverride}"
             + (refreshResult.Length == 0 ? "" : "\n" + refreshResult);
         // Profile renderer: FootType follows the Deep Print dropdown order (0..3).
         // Do not render filtered or non-volume input data as if it were verified.
-        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType < 0 || footType > 3 || showStyle != 1 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
+        if (style == null || style.name != "Deep Print" || manualTicks < 1 || manualTicks > 10000 || footType < 0 || footType > 3 || showStyle < 0 || showStyle > 2 || proportion != 0 || inputData != 0 || autoGrouping != 1 || groupMode != 0 || filterMin != 0 || filterMax != 0)
         {
             ClearRows();
             label.Visible = true;
@@ -1034,9 +1094,16 @@ public class DeepLensProbe : Indicator
                 ? "DeepLens - add Deep Print to this chart"
                 : "DeepLens - unsupported Deep Print settings (see actual / expected)";
             settingsStatus.Visible = true;
-            settingsStatus.Text += "\nExpected: FootType=0..3 ShowStyle=1 InputData=0"
+            settingsStatus.Text += "\nExpected: FootType=0..3 ShowStyle=0..2 InputData=0"
                 + "\nAutoGrouping=1 ManualTicks=1..10000 GroupMode=0"
                 + "\nFilterMin=0 FilterMax=0 Proportion=0 (Bar relative)";
+            return;
+        }
+        if (!NativeShapes && showStyle != 1)
+        {
+            ClearRows();
+            label.Visible = true;
+            label.Text = "DeepLens - Box / Mirror Profile require Native shapes test = true";
             return;
         }
         if (renko == null || !renko.HasBar || renkoFilterIndex < 0)
@@ -1122,6 +1189,7 @@ public class DeepLensProbe : Indicator
         int preferredFont = Math.Max(6, Math.Min(24, (int)Math.Round(sourceFont * zoom)));
         // Fit the active page and its label allowance inside the chosen width.
         bool dualProfile = footType == 1 || footType == 3;
+        bool boxMode = showStyle == 0, mirrorMode = showStyle == 2;
         double baseStride = dualProfile ? .23 : .13;
         double baseTail = dualProfile ? .185 : .085;
         double horizontalZoom = FitZoom(compactScale,
@@ -1194,7 +1262,7 @@ public class DeepLensProbe : Indicator
         bool profileLimited = false;
         ClearRows();
         string footName = footType == 0 ? "VOLUME" : footType == 1 ? "BID | ASK" : footType == 2 ? "DELTA" : "DELTA | VOLUME";
-        label.Text = $"DeepLens v0.6.30 | {footName} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.31 | {footName} / {ModeName(showStyle)} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
         modeLabel.X = panelLeft;
@@ -1324,18 +1392,21 @@ public class DeepLensProbe : Indicator
 
                 if (NativeShapes)
                 {
-                    if (firstValue != 0 || isPoc)
+                    if (firstValue != 0 || isPoc || (boxMode && showZero))
                     {
                         var rect = profileRects[c,rowSlot];
-                        double width = profileWidth * Math.Abs(firstValue) / firstScale;
+                        double width = boxMode ? profileWidth : profileWidth * Math.Abs(firstValue) / firstScale;
                         if (isPoc) width = Math.Max(width, profileWidth * .03);
-                        projected.Add((rect, x, x + width, topY, bottomY, 0, 0, false));
+                        // Mirror: the first lane grows left from its right edge.
+                        // In a pair the second lane grows right, with the gap as the center.
+                        double x1 = mirrorMode ? x + profileWidth - width : x;
+                        projected.Add((rect, x1, x1 + width, topY, bottomY, 0, 0, false));
                         rect.BackColor = firstColor;
-                        rect.LineColor = isPoc ? pocColor : firstColor;
-                        rect.LineWidth = isPoc ? pocWidth : 0;
+                        rect.LineColor = isPoc ? pocColor : boxMode ? firstColor.WithOpacity(255) : firstColor;
+                        rect.LineWidth = isPoc ? pocWidth : boxMode ? borderWidth : 0;
                         rect.Visible = false;
                     }
-                    if (dualProfile && (secondValue != 0 || isPoc))
+                    if (dualProfile && (secondValue != 0 || isPoc || (boxMode && showZero)))
                     {
                         var rect = secondaryRects[c,rowSlot];
                         if (rect == null)
@@ -1343,13 +1414,13 @@ public class DeepLensProbe : Indicator
                             rect = MakeShape(AnnotationType.Rectangle);
                             secondaryRects[c,rowSlot] = rect;
                         }
-                        double width = profileWidth * Math.Abs(secondValue) / secondScale;
+                        double width = boxMode ? profileWidth : profileWidth * Math.Abs(secondValue) / secondScale;
                         if (isPoc) width = Math.Max(width, profileWidth * .03);
                         projected.Add((rect, x + secondOffset, x + secondOffset + width,
                             topY, bottomY, 0, 0, false));
                         rect.BackColor = secondColor;
-                        rect.LineColor = isPoc ? pocColor : secondColor;
-                        rect.LineWidth = isPoc ? pocWidth : 0;
+                        rect.LineColor = isPoc ? pocColor : boxMode ? secondColor.WithOpacity(255) : secondColor;
+                        rect.LineWidth = isPoc ? pocWidth : boxMode ? borderWidth : 0;
                         rect.Visible = false;
                     }
                     // For paired views each sub-column gets an independent label stride.
