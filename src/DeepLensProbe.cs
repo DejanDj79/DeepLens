@@ -15,7 +15,7 @@ public class DeepLensProbe : Indicator
         return new IndicatorDescriptionBase
         {
             Name = "DeepLens Probe",
-            Description = "Three-bar live Renko 30|1 footprint preview.",
+            Description = "Independent Renko 30|1 footprint with live and historical range selection.",
             Tags = new List<string> { "Utility" }
         };
     }
@@ -80,6 +80,42 @@ public class DeepLensProbe : Indicator
     [VolCustom(MinValue = 20, MaxValue = 95, IncrementValue = 1)]
     public int PanelHeight { get; set; } = 70;
 
+    [Category("Selection")]
+    [DisplayName("Selected zone (off = Live Follow)")]
+    public bool UseSelectedZone { get; set; } = false;
+
+    [Category("Selection")]
+    [DisplayName("Zone start (main bars ago)")]
+    [VolCustom(MinValue = 0, MaxValue = 100000, IncrementValue = 1)]
+    public int ZoneStartBarsAgo { get; set; } = 5;
+
+    [Category("Selection")]
+    [DisplayName("Zone end (main bars ago)")]
+    [VolCustom(MinValue = 0, MaxValue = 100000, IncrementValue = 1)]
+    public int ZoneEndBarsAgo { get; set; } = 1;
+
+    [Category("Selection")]
+    [DisplayName("Live candles")]
+    [VolCustom(MinValue = 1, MaxValue = 12, IncrementValue = 1)]
+    public int LiveCandles { get; set; } = 3;
+
+    [Category("Selection")]
+    [DisplayName("Zone candles per page")]
+    [VolCustom(MinValue = 1, MaxValue = 12, IncrementValue = 1)]
+    public int ZoneCandlesPerPage { get; set; } = 6;
+
+    [Category("Selection")]
+    [DisplayName("Zone page (0 = first)")]
+    [VolCustom(MinValue = 0, MaxValue = 100000, IncrementValue = 1)]
+    public int ZonePage { get; set; } = 0;
+
+    private bool zoneCaptured;
+    private int capturedStartAgo = -1, capturedEndAgo = -1;
+    private DateTime zoneStartTime, zoneEndExclusive;
+#if DEEPLENS_CONTEXT_MENU
+    private DateTime? menuStartTime;
+#endif
+
     private ResolutionData renko;
     private int renkoFilterIndex = -1;
     private IAnnotation panelBackground;
@@ -88,10 +124,11 @@ public class DeepLensProbe : Indicator
     private int resizeCalls;
     private int resolvedSourceIndex = -1;
     private int lastRequestedIndex = -1;
-    private readonly IAnnotation[,] profileRects = new IAnnotation[Columns, MaxRows];
-    private readonly IAnnotation[] nativeCandles = new IAnnotation[Columns];
+    private readonly IAnnotation[,] profileRects = new IAnnotation[MaxColumns, MaxRows];
+    private readonly IAnnotation[] nativeCandles = new IAnnotation[MaxColumns];
     private readonly IAnnotation[] parameterColumns = new IAnnotation[3];
-    private const int Columns = 3;
+    private const int MaxColumns = 12;
+    private const int InitialColumns = 3;
     private const int MaxRows = 512;
     private const int InitialRows = 40;
     [Category("Deep Print diagnostic")]
@@ -99,9 +136,9 @@ public class DeepLensProbe : Indicator
     public bool ShowDiagnostics { get; set; } = false;
 
     private IAnnotation label;
-    private readonly IAnnotation[,] bidLabels = new IAnnotation[Columns, MaxRows];
-    private readonly IAnnotation[,] askLabels = new IAnnotation[Columns, MaxRows];
-    private readonly IAnnotation[] candleMarkers = new IAnnotation[Columns];
+    private readonly IAnnotation[,] bidLabels = new IAnnotation[MaxColumns, MaxRows];
+    private readonly IAnnotation[,] askLabels = new IAnnotation[MaxColumns, MaxRows];
+    private readonly IAnnotation[] candleMarkers = new IAnnotation[MaxColumns];
 
     private IAnnotation MakeText(double x, double y, int size)
     {
@@ -189,7 +226,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.22";
+        Description = "DeepLens v0.6.23";
     }
 
     public override void OnInit()
@@ -208,7 +245,7 @@ public class DeepLensProbe : Indicator
         projectedLabels.Clear();
         // Deepchart rebuilds the annotation groups when settings change.
         // Do not reuse annotations belonging to the previous load.
-        for (int c = 0; c < Columns; c++)
+        for (int c = 0; c < MaxColumns; c++)
         {
             for (int k = 0; k < MaxRows; k++)
             {
@@ -229,7 +266,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.22 - waiting";
+        label.Text = "DeepLens v0.6.23 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -246,14 +283,22 @@ public class DeepLensProbe : Indicator
             parameterColumns[i].LineWidth = 1;
             parameterColumns[i].Visible = false;
         }
-        for (int c = 0; c < Columns; c++)
+        for (int c = 0; c < MaxColumns; c++)
         {
-            nativeCandles[c] = MakeShape(AnnotationType.Candlestick);
-            candleMarkers[c] = MakeText(.10, .14, 10);
-            candleMarkers[c].Visible = false;
-            for (int k = 0; k < InitialRows; k++)
-                EnsureRow(c, k);
+            nativeCandles[c] = null;
+            candleMarkers[c] = null;
+            if (c < InitialColumns)
+                EnsureColumn(c);
         }
+    }
+
+    private void EnsureColumn(int c)
+    {
+        if (nativeCandles[c] != null) return;
+        nativeCandles[c] = MakeShape(AnnotationType.Candlestick);
+        candleMarkers[c] = MakeText(.10, .14, 10);
+        candleMarkers[c].Visible = false;
+        for (int k = 0; k < InitialRows; k++) EnsureRow(c, k);
     }
 
     private void EnsureRow(int c, int k)
@@ -273,15 +318,16 @@ public class DeepLensProbe : Indicator
         panelBackground.Visible = false;
         for (int k = 0; k < MaxRows; k++)
         {
-            for (int c = 0; c < Columns; c++)
+            for (int c = 0; c < MaxColumns; c++)
             {
                 if (profileRects[c,k] == null) continue;
                 bidLabels[c,k].Visible = askLabels[c,k].Visible = false;
                 profileRects[c,k].Visible = false;
             }
         }
-        for (int c = 0; c < Columns; c++)
+        for (int c = 0; c < MaxColumns; c++)
         {
+            if (nativeCandles[c] == null) continue;
             candleMarkers[c].Visible = false;
             nativeCandles[c].Visible = false;
         }
@@ -372,6 +418,102 @@ public class DeepLensProbe : Indicator
         return fallback;
     }
 
+    // Convert main-chart bar selections into a fixed exchange-time interval.
+    // Offsets are captured once, so new bars do not move an active selection.
+    private bool CaptureZone()
+    {
+        if (zoneCaptured && capturedStartAgo == ZoneStartBarsAgo &&
+            capturedEndAgo == ZoneEndBarsAgo) return true;
+        var main = VAn.BarVars;
+        if (main == null || main.Count == 0 || renko == null || !renko.HasBar) return false;
+        int last = Math.Min(VAn.BarIndex, main.Count - 1);
+        int start = last - Math.Max(ZoneStartBarsAgo, ZoneEndBarsAgo);
+        int end = last - Math.Min(ZoneStartBarsAgo, ZoneEndBarsAgo);
+        if (start < 0 || end < start || end > last || main[start] == null || main[end] == null) return false;
+        DateTime finish;
+        if (end < last && main[end + 1] != null)
+            finish = main[end + 1].exchDt;
+        else
+        {
+            var current = renko.CurrentBar;
+            if (current == null) return false;
+            finish = current.exchDt.AddTicks(1);
+        }
+        if (finish <= main[start].exchDt) return false;
+        zoneStartTime = main[start].exchDt;
+        zoneEndExclusive = finish;
+        capturedStartAgo = ZoneStartBarsAgo;
+        capturedEndAgo = ZoneEndBarsAgo;
+        zoneCaptured = true;
+        return true;
+    }
+
+    private static int FirstAtOrAfter(List<BarClass> bars, int last, DateTime time)
+    {
+        int lo = 0, hi = last + 1;
+        while (lo < hi)
+        {
+            int mid = lo + (hi - lo) / 2;
+            if (bars[mid].exchDt < time) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+#if DEEPLENS_CONTEXT_MENU
+    // Available only in SDK builds exposing these documented desktop APIs.
+    public override void OnContextMenu(ChartAreaRef? area, int? barIndex)
+    {
+        if (area != ChartArea && area != ChartAreaRef.Main) return;
+        var main = VAn.BarVars;
+        bool valid = main != null && barIndex.HasValue && barIndex.Value >= 0 &&
+            barIndex.Value < main.Count && main[barIndex.Value] != null;
+        VAn.AddMenuItem(this, "DeepLens: start zone", MarkZoneStart, valid, barIndex);
+        VAn.AddMenuItem(this, "DeepLens: finish zone", MarkZoneEnd, valid && menuStartTime.HasValue, barIndex);
+        VAn.AddMenuItem(this, "DeepLens: Live Follow", (a,b,p) =>
+        {
+            UseSelectedZone = false;
+            zoneCaptured = false;
+            menuStartTime = null;
+            NeedRecalculate = true;
+        }, true);
+    }
+
+    private void MarkZoneStart(ChartAreaRef? area, int? barIndex, object param)
+    {
+        var main = VAn.BarVars;
+        if (main == null || !(param is int i) || i < 0 || i >= main.Count || main[i] == null) return;
+        menuStartTime = main[i].exchDt;
+    }
+
+    private void MarkZoneEnd(ChartAreaRef? area, int? barIndex, object param)
+    {
+        var main = VAn.BarVars;
+        if (!menuStartTime.HasValue || main == null || !(param is int i) ||
+            i < 0 || i >= main.Count || main[i] == null || renko == null || !renko.HasBar) return;
+        DateTime start = menuStartTime.Value;
+        DateTime finish = main[i].exchDt;
+        // Both clicks can be made in either chronological direction.
+        DateTime earlier = start <= finish ? start : finish;
+        DateTime later = start <= finish ? finish : start;
+        int last = Math.Min(VAn.BarIndex, main.Count - 1);
+        int next = FirstAtOrAfter(main, last, later.AddTicks(1));
+        var current = renko.CurrentBar;
+        if (current == null) return;
+        DateTime exclusive = next <= last ? main[next].exchDt : current.exchDt.AddTicks(1);
+        if (exclusive <= earlier) return;
+        zoneStartTime = earlier;
+        zoneEndExclusive = exclusive;
+        capturedStartAgo = ZoneStartBarsAgo;
+        capturedEndAgo = ZoneEndBarsAgo;
+        zoneCaptured = true;
+        UseSelectedZone = true;
+        ZonePage = 0;
+        menuStartTime = null;
+        NeedRecalculate = true;
+    }
+#endif
+
     private static string FindColor(string raw, string name)
     {
         int at = raw.IndexOf("\"" + name + "\"");
@@ -391,7 +533,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.22 - parameter inspector";
+            label.Text = "DeepLens v0.6.23 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -577,6 +719,40 @@ public class DeepLensProbe : Indicator
             return;
         }
 
+        int first;
+        int columns;
+        int zoneTotal = 0, page = 0;
+        if (UseSelectedZone)
+        {
+            if (!CaptureZone())
+            {
+                ClearRows();
+                label.Visible = true;
+                label.Text = "DeepLens - selected main-chart range is not available";
+                return;
+            }
+            int from = FirstAtOrAfter(bars, end, zoneStartTime);
+            int until = FirstAtOrAfter(bars, end, zoneEndExclusive);
+            zoneTotal = until - from;
+            if (zoneTotal <= 0)
+            {
+                ClearRows();
+                label.Visible = true;
+                label.Text = "DeepLens - no Renko bars in selected time range";
+                return;
+            }
+            int pageSize = Math.Clamp(ZoneCandlesPerPage, 1, MaxColumns);
+            page = Math.Clamp(ZonePage, 0, (zoneTotal - 1) / pageSize);
+            first = from + page * pageSize;
+            columns = Math.Min(pageSize, until - first);
+        }
+        else
+        {
+            zoneCaptured = false;
+            columns = Math.Min(end + 1, Math.Clamp(LiveCandles, 1, MaxColumns));
+            first = end - columns + 1;
+        }
+
         // Compact baseline: keep the user zoom control and scale all profile geometry together.
         const double compactScale = .75;
         double zoom = compactScale * Math.Max(60, Math.Min(180, Zoom)) / 100.0;
@@ -587,21 +763,21 @@ public class DeepLensProbe : Indicator
         const double paddingY = .012;
         double preferredStep = .027 * zoom;
         int preferredFont = Math.Max(6, Math.Min(24, (int)Math.Round(sourceFont * zoom)));
-        // Fit three columns and their label allowance inside the chosen width.
-        double horizontalZoom = Math.Min(zoom, panelWidth / (.028 + (Columns - 1) * .13 + .05 + .035));
+        // Fit the active page and its label allowance inside the chosen width.
+        double horizontalZoom = Math.Min(zoom, panelWidth / (.028 + (columns - 1) * .13 + .05 + .035));
         double stride = .13 * horizontalZoom;
         double profileWidth = .05 * horizontalZoom;
         double askOffset = .036 * horizontalZoom;
         double left = panelLeft + .028 * horizontalZoom;
         int high = int.MinValue, low = int.MaxValue;
         bool anyVbp = false;
-        int[] poc = new int[Columns];
-        int[] maxVol = new int[Columns];
-        bool[] has = new bool[Columns];
+        int[] poc = new int[columns];
+        int[] maxVol = new int[columns];
+        bool[] has = new bool[columns];
 
-        for (int c = 0; c < Columns; c++)
+        for (int c = 0; c < columns; c++)
         {
-            int index = end - Columns + 1 + c;
+            int index = first + c;
             if (index < 0 || index >= bars.Count) continue;
             var bar = bars[index];
             if (bar == null) continue;
@@ -632,7 +808,7 @@ public class DeepLensProbe : Indicator
         {
             ClearRows();
             label.Visible = true;
-            label.Text = "DeepLens - no VBP data for the last three Renko 30|1 bars";
+            label.Text = "DeepLens - no VBP data for the selected Renko 30|1 bars";
             return;
         }
 
@@ -652,7 +828,7 @@ public class DeepLensProbe : Indicator
         int labelStride = Math.Max(1, (int)Math.Ceiling((font + 1.0) / (preferredFont + 1.0) * preferredStep / step));
         bool profileLimited = false;
         ClearRows();
-        label.Text = $"DeepLens v0.6.22 | RENKO 30|1 | DELTA PROFILE | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.23 | RENKO 30|1 | {(UseSelectedZone ? $"ZONE page {page + 1}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
 
@@ -662,9 +838,10 @@ public class DeepLensProbe : Indicator
                 panelTop, panelTop + panelHeight, 0, 0, false));
         }
 
-        for (int c = 0; c < Columns; c++)
+        for (int c = 0; c < columns; c++)
         {
-            int index = end - Columns + 1 + c;
+            int index = first + c;
+            EnsureColumn(c);
             double x = left + c * stride;
             if (index < 0 || index >= bars.Count) continue;
             var bar = bars[index];
