@@ -112,9 +112,19 @@ public class DeepLensProbe : Indicator
     private bool zoneCaptured;
     private int capturedStartAgo = -1, capturedEndAgo = -1;
     private DateTime zoneStartTime, zoneEndExclusive;
-#if DEEPLENS_CONTEXT_MENU
     private DateTime? menuStartTime;
-#endif
+    private IAnnotation zoneMarker;
+    private IAnnotation modeLabel;
+    private bool panelHidden;
+    private int zonePageCount, activeZonePage;
+    // Copy raw OHLC and footprint numbers, not mutable SDK bar references.
+    private sealed class LensBar
+    {
+        public int Index, OpenInT, HighInT, LowInT, CloseInT;
+        public readonly List<(int PinT, long BidVol, long AskVol, long TotVol)> Levels = new();
+    }
+    private List<LensBar> lastView;
+    private List<LensBar> frozenView;
 
     private ResolutionData renko;
     private int renkoFilterIndex = -1;
@@ -226,7 +236,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.24";
+        Description = "DeepLens v0.6.25";
     }
 
     public override void OnInit()
@@ -258,15 +268,21 @@ public class DeepLensProbe : Indicator
         lastRequestedIndex = -1;
         // Register first in the same foreground annotation group as the native shapes.
         // This puts the panel behind the candles and profiles in insertion order.
+        zoneMarker = MakeShape(AnnotationType.Rectangle);
+        zoneMarker.BackColor = ColorRef.FromRgb(80, 165, 245).WithOpacity(28);
+        zoneMarker.LineColor = ColorRef.FromRgb(80, 165, 245);
+        zoneMarker.LineWidth = 1;
         panelBackground = MakeShape(AnnotationType.Rectangle);
         panelBackground.BackColor = ColorRef.FromRgb(18, 21, 27);
         panelBackground.LineColor = ColorRef.FromRgb(82, 88, 99);
         panelBackground.LineWidth = 1;
+        modeLabel = MakeText(.08, .08, 10);
+        modeLabel.Visible = false;
         projectionStatus = MakeText(.48, .32, 10);
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.24 - waiting";
+        label.Text = "DeepLens v0.6.25 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -316,6 +332,7 @@ public class DeepLensProbe : Indicator
     private void ClearRows()
     {
         panelBackground.Visible = false;
+        if (modeLabel != null) modeLabel.Visible = false;
         for (int k = 0; k < MaxRows; k++)
         {
             for (int c = 0; c < MaxColumns; c++)
@@ -460,8 +477,7 @@ public class DeepLensProbe : Indicator
         return lo;
     }
 
-#if DEEPLENS_CONTEXT_MENU
-    // Available only in SDK builds exposing these documented desktop APIs.
+    // The installed desktop SDK supports these context menu APIs.
     public override void OnContextMenu(ChartAreaRef? area, int? barIndex)
     {
         if (area != ChartArea && area != ChartAreaRef.Main) return;
@@ -470,13 +486,116 @@ public class DeepLensProbe : Indicator
             barIndex.Value < main.Count && main[barIndex.Value] != null;
         VAn.AddMenuItem(this, "DeepLens: start zone", MarkZoneStart, valid, barIndex);
         VAn.AddMenuItem(this, "DeepLens: finish zone", MarkZoneEnd, valid && menuStartTime.HasValue, barIndex);
-        VAn.AddMenuItem(this, "DeepLens: Live Follow", (a,b,p) =>
+        VAn.AddMenuItem(this, "DeepLens: Live Follow", ResumeLive, true);
+        VAn.AddMenuItem(this, "DeepLens: previous page", (a,b,p) =>
+        {
+            ZonePage = Math.Max(0, activeZonePage - 1);
+            frozenView = null;
+            NeedRecalculate = true;
+        }, !panelHidden && UseSelectedZone && frozenView == null && activeZonePage > 0);
+        VAn.AddMenuItem(this, "DeepLens: next page", (a,b,p) =>
+        {
+            ZonePage = Math.Min(zonePageCount - 1, activeZonePage + 1);
+            frozenView = null;
+            NeedRecalculate = true;
+        }, !panelHidden && UseSelectedZone && frozenView == null && activeZonePage + 1 < zonePageCount);
+        VAn.AddMenuItem(this, frozenView == null ? "DeepLens: freeze" : "DeepLens: resume",
+            (a,b,p) =>
+            {
+                if (frozenView != null) frozenView = null;
+                else if (lastView != null && lastView.Count > 0) frozenView = lastView;
+                NeedRecalculate = true;
+            }, !panelHidden && lastView != null && lastView.Count > 0);
+        VAn.AddMenuItem(this, "DeepLens: clear zone", (a,b,p) =>
         {
             UseSelectedZone = false;
             zoneCaptured = false;
             menuStartTime = null;
+            frozenView = null;
             NeedRecalculate = true;
-        }, true);
+        }, UseSelectedZone || menuStartTime.HasValue);
+        VAn.AddMenuItem(this, panelHidden ? "DeepLens: show panel" : "DeepLens: hide panel",
+            (a,b,p) =>
+            {
+                panelHidden = !panelHidden;
+                NeedRecalculate = true;
+            }, true);
+    }
+
+    private void ResumeLive(ChartAreaRef? area, int? barIndex, object param)
+    {
+        UseSelectedZone = false;
+        zoneCaptured = false;
+        menuStartTime = null;
+        frozenView = null;
+        panelHidden = false;
+        NeedRecalculate = true;
+    }
+
+    // Absolute chart coordinates: the marker stays with the selected bars when panning.
+    private void UpdateZoneMarker()
+    {
+        if (zoneMarker == null) return;
+        zoneMarker.Visible = false;
+        var main = VAn.BarVars;
+        if (main == null || main.Count == 0) return;
+        int last = Math.Min(VAn.BarIndex, main.Count - 1);
+        if (last < 0) return;
+        int begin, finish;
+        if (menuStartTime.HasValue)
+        {
+            begin = FirstAtOrAfter(main, last, menuStartTime.Value);
+            finish = FirstAtOrAfter(main, last, menuStartTime.Value.AddTicks(1)) - 1;
+        }
+        else if (UseSelectedZone && zoneCaptured)
+        {
+            begin = FirstAtOrAfter(main, last, zoneStartTime);
+            finish = FirstAtOrAfter(main, last, zoneEndExclusive) - 1;
+        }
+        else return;
+        if (begin > last || finish < begin) return;
+        double hi = double.NegativeInfinity, lo = double.PositiveInfinity;
+        for (int i = begin; i <= finish; i++)
+        {
+            var bar = main[i];
+            if (bar == null) continue;
+            hi = Math.Max(hi, bar.High);
+            lo = Math.Min(lo, bar.Low);
+        }
+        if (!double.IsFinite(hi) || !double.IsFinite(lo) || hi < lo) return;
+        if (hi == lo)
+        {
+            double tick = VAn.FromPrice(hi).SubDouble;
+            if (tick <= 0 || !double.IsFinite(tick)) return;
+            hi += tick * .5;
+            lo -= tick * .5;
+        }
+        zoneMarker.X = begin + .5;
+        zoneMarker.X2 = finish + 1.5;
+        zoneMarker.Y = hi;
+        zoneMarker.Y2 = lo;
+        zoneMarker.Visible = true;
+    }
+
+    private LensBar CopyBar(BarClass source, int index)
+    {
+        if (source == null) return null;
+        var copy = new LensBar
+        {
+            Index = index, OpenInT = source.OpenInT, HighInT = source.HighInT,
+            LowInT = source.LowInT, CloseInT = source.CloseInT
+        };
+        if (source.VbpListAll != null)
+        {
+            foreach (var entries in source.VbpListAll.SortedLHValues)
+            {
+                if (entries == null || renkoFilterIndex < 0 || renkoFilterIndex >= entries.Length ||
+                    entries[renkoFilterIndex] == null) continue;
+                var level = entries[renkoFilterIndex];
+                copy.Levels.Add((level.PinT, level.BidVol, level.AskVol, level.TotVol));
+            }
+        }
+        return copy;
     }
 
     private void MarkZoneStart(ChartAreaRef? area, int? barIndex, object param)
@@ -484,6 +603,7 @@ public class DeepLensProbe : Indicator
         var main = VAn.BarVars;
         if (main == null || !(param is int i) || i < 0 || i >= main.Count || main[i] == null) return;
         menuStartTime = main[i].exchDt;
+        NeedRecalculate = true;
     }
 
     private void MarkZoneEnd(ChartAreaRef? area, int? barIndex, object param)
@@ -508,11 +628,12 @@ public class DeepLensProbe : Indicator
         capturedEndAgo = ZoneEndBarsAgo;
         zoneCaptured = true;
         UseSelectedZone = true;
+        frozenView = null;
+        panelHidden = false;
         ZonePage = 0;
         menuStartTime = null;
         NeedRecalculate = true;
     }
-#endif
 
     private static string FindColor(string raw, string name)
     {
@@ -528,12 +649,21 @@ public class DeepLensProbe : Indicator
     public override void OnEnd(bool isRt)
     {
         if (label == null) return;
+        UpdateZoneMarker();
+        if (panelHidden)
+        {
+            ClearRows();
+            label.Visible = settingsStatus.Visible = projectionStatus.Visible = false;
+            foreach (var col in parameterColumns) col.Visible = false;
+            return;
+        }
+        if (frozenView == null) lastView = null;
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && !ShowAllParameters && NativeShapes;
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.24 - parameter inspector";
+            label.Text = "DeepLens v0.6.25 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -722,6 +852,7 @@ public class DeepLensProbe : Indicator
         int firstRenkoIndex;
         int columns;
         int zoneTotal = 0, zonePageIndex = 0;
+        zonePageCount = 0;
         if (UseSelectedZone)
         {
             if (!CaptureZone())
@@ -731,6 +862,7 @@ public class DeepLensProbe : Indicator
                 label.Text = "DeepLens - selected main-chart range is not available";
                 return;
             }
+            UpdateZoneMarker();
             int from = FirstAtOrAfter(bars, end, zoneStartTime);
             int until = FirstAtOrAfter(bars, end, zoneEndExclusive);
             zoneTotal = until - from;
@@ -742,7 +874,9 @@ public class DeepLensProbe : Indicator
                 return;
             }
             int pageSize = Math.Clamp(ZoneCandlesPerPage, 1, MaxColumns);
-            zonePageIndex = Math.Clamp(ZonePage, 0, (zoneTotal - 1) / pageSize);
+            zonePageCount = (zoneTotal - 1) / pageSize + 1;
+            zonePageIndex = Math.Clamp(ZonePage, 0, zonePageCount - 1);
+            activeZonePage = zonePageIndex;
             firstRenkoIndex = from + zonePageIndex * pageSize;
             columns = Math.Min(pageSize, until - firstRenkoIndex);
         }
@@ -752,6 +886,15 @@ public class DeepLensProbe : Indicator
             columns = Math.Min(end + 1, Math.Clamp(LiveCandles, 1, MaxColumns));
             firstRenkoIndex = end - columns + 1;
         }
+
+        List<LensBar> view = frozenView;
+        if (view == null)
+        {
+            view = new List<LensBar>(columns);
+            for (int i = 0; i < columns; i++)
+                view.Add(CopyBar(bars[firstRenkoIndex + i], firstRenkoIndex + i));
+        }
+        columns = view.Count;
 
         // Compact baseline: keep the user zoom control and scale all profile geometry together.
         const double compactScale = .75;
@@ -772,14 +915,12 @@ public class DeepLensProbe : Indicator
         int high = int.MinValue, low = int.MaxValue;
         bool anyVbp = false;
         int[] poc = new int[columns];
-        int[] maxVol = new int[columns];
+        long[] maxVol = new long[columns];
         bool[] has = new bool[columns];
 
         for (int c = 0; c < columns; c++)
         {
-            int index = firstRenkoIndex + c;
-            if (index < 0 || index >= bars.Count) continue;
-            var bar = bars[index];
+            var bar = view[c];
             if (bar == null) continue;
             // Include both OHLC extremes and all reported footprint prices.
             if (bar.HighInT >= bar.LowInT)
@@ -787,11 +928,8 @@ public class DeepLensProbe : Indicator
                 high = Math.Max(high, bar.HighInT);
                 low = Math.Min(low, bar.LowInT);
             }
-            if (bar.VbpListAll == null) continue;
-            foreach (var entries in bar.VbpListAll.SortedLHValues)
+            foreach (var level in bar.Levels)
             {
-                if (entries == null || renkoFilterIndex >= entries.Length || entries[renkoFilterIndex] == null) continue;
-                var level = entries[renkoFilterIndex];
                 high = Math.Max(high, level.PinT);
                 low = Math.Min(low, level.PinT);
                 anyVbp = true;
@@ -812,6 +950,8 @@ public class DeepLensProbe : Indicator
             return;
         }
 
+        lastView = view;
+
         // Auto fit all selected bars. Keep the original fixed price grouping and
         // shrink the display scale, never the price range or the underlying data.
         int group = manualTicks;
@@ -828,9 +968,13 @@ public class DeepLensProbe : Indicator
         int labelStride = Math.Max(1, (int)Math.Ceiling((font + 1.0) / (preferredFont + 1.0) * preferredStep / step));
         bool profileLimited = false;
         ClearRows();
-        label.Text = $"DeepLens v0.6.24 | RENKO 30|1 | {(UseSelectedZone ? $"ZONE page {zonePageIndex + 1}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.25 | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
+        modeLabel.X = panelLeft;
+        modeLabel.Y = Math.Max(0, panelTop - .028);
+        modeLabel.Text = frozenView != null ? "DeepLens | FROZEN" : $"DeepLens | {zonePageIndex + 1}/{zonePageCount}";
+        modeLabel.Visible = frozenView != null || UseSelectedZone;
 
         if (NativeShapes && ShowPanelBackground)
         {
@@ -840,12 +984,11 @@ public class DeepLensProbe : Indicator
 
         for (int c = 0; c < columns; c++)
         {
-            int index = firstRenkoIndex + c;
             EnsureColumn(c);
             double x = left + c * stride;
-            if (index < 0 || index >= bars.Count) continue;
-            var bar = bars[index];
+            var bar = view[c];
             if (bar == null) continue;
+            int index = bar.Index;
             // Text-based candle preview: each row corresponds to an inherited price bucket.
             // Body and wick are quantized to that grid, not exact sub-row geometry.
             int candleHigh = bar.HighInT, candleLow = bar.LowInT;
@@ -898,14 +1041,12 @@ public class DeepLensProbe : Indicator
                     mark.Visible = true;
                 }
             }
-            if (bar.VbpListAll == null || !has[c]) continue;
+            if (!has[c]) continue;
             // Sparse occupied rows: a large gap between bars does not allocate
             // thousands of empty annotations or truncate the visible price range.
             var levels = new SortedDictionary<int, (long Bid, long Ask, long Total)>();
-            foreach (var entries in bar.VbpListAll.SortedLHValues)
+            foreach (var level in bar.Levels)
             {
-                if (entries == null || renkoFilterIndex >= entries.Length || entries[renkoFilterIndex] == null) continue;
-                var level = entries[renkoFilterIndex];
                 int k = (int)(((long)top - level.PinT) / group);
                 if (k < 0 || k >= visibleRows) continue;
                 levels.TryGetValue(k, out var old);
