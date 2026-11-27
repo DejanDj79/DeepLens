@@ -305,7 +305,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.32";
+        Description = "DeepLens v0.6.33";
     }
 
     public override void OnInit()
@@ -347,12 +347,14 @@ public class DeepLensProbe : Indicator
         panelBackground.LineColor = ColorRef.FromRgb(82, 88, 99);
         panelBackground.LineWidth = 1;
         modeLabel = MakeText(.08, .08, 10);
+        modeLabel.FontBold = false;
+        modeLabel.BackColor = ColorRef.FromRgb(18, 21, 27);
         modeLabel.Visible = false;
         projectionStatus = MakeText(.48, .32, 10);
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.32 - waiting";
+        label.Text = "DeepLens v0.6.33 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -926,7 +928,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.32 - parameter inspector";
+            label.Text = "DeepLens v0.6.33 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -1105,6 +1107,15 @@ public class DeepLensProbe : Indicator
         {
             autoGrouping = 1; groupMode = 0; manualTicks = FixedTicksOverride;
         }
+        bool hasOverrides = (TypeOverride >= 0 && TypeOverride <= 3) ||
+            (ModeOverride >= 0 && ModeOverride <= 2) ||
+            (FixedTicksOverride > 0 && FixedTicksOverride <= 10000);
+        // Keep source provenance separate from effective settings: an override
+        // can be layered over an SDK snapshot, automatic fallback or local mode.
+        string sourceBadge = UseLocalSettings ? "LOCAL" :
+            localMode ? "FALLBACK" : $"INHERITED #{resolvedSourceIndex}";
+        if (hasOverrides)
+            sourceBadge = localMode ? sourceBadge + " + OVERRIDE" : $"OVERRIDE (SDK #{resolvedSourceIndex})";
         settingsStatus.Visible = ShowDiagnostics;
         settingsStatus.Text = $"Index {resolvedSourceIndex} (requested {InspectIndex}): {(style == null ? "not found" : style.name)} | Params {parameterCount}\n"
             + $"FootType={footType} ShowStyle={showStyle} InputData={inputData}\n"
@@ -1113,7 +1124,8 @@ public class DeepLensProbe : Indicator
             + $"Candle style={outsideStyle} Alignment={markerAlignment} Width={markerWidth}\n"
             + $"SDK Type={sourceFootType} Mode={sourceShowStyle} | Effective {TypeName(footType)} / {ModeName(showStyle)}"
             + $"\nOverride: Type={TypeName(TypeOverride)} Mode={ModeName(ModeOverride)} FixedTicks={FixedTicksOverride}"
-            + (localMode ? (UseLocalSettings ? "\nLOCAL: forced by user" : "\nLOCAL: no SDK parameters") : "")
+            + $"\nSource: {sourceBadge}"
+            + (localMode ? (UseLocalSettings ? "\nLOCAL: forced by user" : "\nFALLBACK: no SDK parameters") : "\nSDK snapshot may be stale")
             + (refreshResult.Length == 0 ? "" : "\n" + refreshResult);
         // Profile renderer: FootType follows the Deep Print dropdown order (0..3).
         // Do not render filtered or non-volume input data as if it were verified.
@@ -1293,15 +1305,17 @@ public class DeepLensProbe : Indicator
         bool profileLimited = false;
         ClearRows();
         string footName = footType == 0 ? "VOLUME" : footType == 1 ? "BID | ASK" : footType == 2 ? "DELTA" : "DELTA | VOLUME";
-        label.Text = $"DeepLens v0.6.32 | {footName} / {ModeName(showStyle)} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.33 | {footName} / {ModeName(showStyle)} | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
         modeLabel.X = panelLeft;
-        modeLabel.Y = Math.Max(0, panelTop - .028);
-        string modeSuffix = frozenView != null ? " | FROZEN" :
-            UseSelectedZone ? $" | {zonePageIndex + 1}/{zonePageCount}" : "";
-        modeLabel.Text = localMode ? "DeepLens | LOCAL" + modeSuffix : "DeepLens" + modeSuffix;
-        modeLabel.Visible = localMode || frozenView != null || UseSelectedZone;
+        modeLabel.Y = Math.Max(0, panelTop - .06);
+        string modeSuffix = UseSelectedZone ? $" | {zonePageIndex + 1}/{zonePageCount}" : "";
+        if (frozenView != null) modeSuffix += " | FROZEN";
+        modeLabel.Text = $"DeepLens | {sourceBadge}{modeSuffix}\nRenko 30|1 | {TypeName(footType)} | {ModeName(showStyle)} | {group} ticks";
+        modeLabel.ForeColor = hasOverrides || UseLocalSettings ? ColorRef.FromRgb(127, 181, 255) :
+            localMode ? ColorRef.FromRgb(242, 188, 101) : ColorRef.FromRgb(101, 204, 145);
+        modeLabel.Visible = true;
 
         if (NativeShapes && ShowPanelBackground)
         {
