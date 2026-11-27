@@ -226,7 +226,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.23";
+        Description = "DeepLens v0.6.24";
     }
 
     public override void OnInit()
@@ -266,7 +266,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.23 - waiting";
+        label.Text = "DeepLens v0.6.24 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -533,7 +533,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.23 - parameter inspector";
+            label.Text = "DeepLens v0.6.24 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -719,9 +719,9 @@ public class DeepLensProbe : Indicator
             return;
         }
 
-        int first;
+        int firstRenkoIndex;
         int columns;
-        int zoneTotal = 0, page = 0;
+        int zoneTotal = 0, zonePageIndex = 0;
         if (UseSelectedZone)
         {
             if (!CaptureZone())
@@ -742,15 +742,15 @@ public class DeepLensProbe : Indicator
                 return;
             }
             int pageSize = Math.Clamp(ZoneCandlesPerPage, 1, MaxColumns);
-            page = Math.Clamp(ZonePage, 0, (zoneTotal - 1) / pageSize);
-            first = from + page * pageSize;
-            columns = Math.Min(pageSize, until - first);
+            zonePageIndex = Math.Clamp(ZonePage, 0, (zoneTotal - 1) / pageSize);
+            firstRenkoIndex = from + zonePageIndex * pageSize;
+            columns = Math.Min(pageSize, until - firstRenkoIndex);
         }
         else
         {
             zoneCaptured = false;
             columns = Math.Min(end + 1, Math.Clamp(LiveCandles, 1, MaxColumns));
-            first = end - columns + 1;
+            firstRenkoIndex = end - columns + 1;
         }
 
         // Compact baseline: keep the user zoom control and scale all profile geometry together.
@@ -777,7 +777,7 @@ public class DeepLensProbe : Indicator
 
         for (int c = 0; c < columns; c++)
         {
-            int index = first + c;
+            int index = firstRenkoIndex + c;
             if (index < 0 || index >= bars.Count) continue;
             var bar = bars[index];
             if (bar == null) continue;
@@ -828,7 +828,7 @@ public class DeepLensProbe : Indicator
         int labelStride = Math.Max(1, (int)Math.Ceiling((font + 1.0) / (preferredFont + 1.0) * preferredStep / step));
         bool profileLimited = false;
         ClearRows();
-        label.Text = $"DeepLens v0.6.23 | RENKO 30|1 | {(UseSelectedZone ? $"ZONE page {page + 1}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.24 | RENKO 30|1 | {(UseSelectedZone ? $"ZONE page {zonePageIndex + 1}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
 
@@ -840,7 +840,7 @@ public class DeepLensProbe : Indicator
 
         for (int c = 0; c < columns; c++)
         {
-            int index = first + c;
+            int index = firstRenkoIndex + c;
             EnsureColumn(c);
             double x = left + c * stride;
             if (index < 0 || index >= bars.Count) continue;
