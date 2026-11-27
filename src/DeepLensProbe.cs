@@ -279,7 +279,7 @@ public class DeepLensProbe : Indicator
         OnEndCall = CallHandler.HistRT;
         OnResizeCall = CallHandler.HistRT;
         NeedVbp = true;
-        Description = "DeepLens v0.6.26";
+        Description = "DeepLens v0.6.27";
     }
 
     public override void OnInit()
@@ -325,7 +325,7 @@ public class DeepLensProbe : Indicator
         projectionStatus.BackColor = ColorRef.FromRgb(25, 30, 38);
         resizeCalls = 0;
         label = MakeText(.09, .05, 12);
-        label.Text = "DeepLens v0.6.26 - waiting";
+        label.Text = "DeepLens v0.6.27 - waiting";
         label.Visible = ShowDiagnostics || ShowAllParameters;
         projectionStatus.Visible = ShowDiagnostics && NativeShapes && !ShowAllParameters;
         settingsStatus = MakeText(.09, .045, 10);
@@ -579,15 +579,26 @@ public class DeepLensProbe : Indicator
             layoutEnabled && PanelHeight < 95);
         VAn.AddMenuItem(this, "DeepLens: shorter panel", (a,b,p) => AdjustLayout(0,0,0,-10,0),
             layoutEnabled && PanelHeight > 20);
-        VAn.AddMenuItem(this, "DeepLens: zoom in", (a,b,p) => AdjustLayout(0,0,0,0,10),
+        VAn.AddMenuItem(this, $"DeepLens: zoom in ({Zoom}% -> {Math.Min(180, Zoom + 10)}%)", (a,b,p) => AdjustLayout(0,0,0,0,10),
             layoutEnabled && Zoom < 180);
-        VAn.AddMenuItem(this, "DeepLens: zoom out", (a,b,p) => AdjustLayout(0,0,0,0,-10),
+        VAn.AddMenuItem(this, $"DeepLens: zoom out ({Zoom}% -> {Math.Max(60, Zoom - 10)}%)", (a,b,p) => AdjustLayout(0,0,0,0,-10),
             layoutEnabled && Zoom > 60);
         VAn.AddMenuItem(this, "DeepLens: reset layout", (a,b,p) =>
         {
             PanelX = 8; PanelY = 12; PanelWidth = 28; PanelHeight = 70; Zoom = 100;
             NeedRecalculate = true;
         }, layoutEnabled);
+    }
+
+    // Keep every candle and price row visible while reserving zoom headroom at 100%.
+    // At 180% reach the largest allowed size (subject to the panel's available space).
+    private static double FitZoom(double preferredAt100, double fitLimit, int zoomPercent)
+    {
+        double baseline = Math.Min(preferredAt100, fitLimit * .75);
+        double maximum = Math.Min(preferredAt100 * 1.8, fitLimit);
+        int z = Math.Clamp(zoomPercent, 60, 180);
+        if (z <= 100) return baseline * z / 100.0;
+        return baseline + (maximum - baseline) * (z - 100) / 80.0;
     }
 
     private void AdjustLayout(int dx, int dy, int dw, int dh, int dz)
@@ -752,7 +763,7 @@ public class DeepLensProbe : Indicator
         if (ShowAllParameters)
         {
             ClearRows();
-            label.Text = "DeepLens v0.6.26 - parameter inspector";
+            label.Text = "DeepLens v0.6.27 - parameter inspector";
             label.FontSize = 12;
             var parameters = TryGetParams(InspectIndex);
             var props = parameters == null ? null : parameters.XMLPropList;
@@ -996,7 +1007,8 @@ public class DeepLensProbe : Indicator
         double preferredStep = .027 * zoom;
         int preferredFont = Math.Max(6, Math.Min(24, (int)Math.Round(sourceFont * zoom)));
         // Fit the active page and its label allowance inside the chosen width.
-        double horizontalZoom = Math.Min(zoom, panelWidth / (.028 + (columns - 1) * .13 + .05 + .035));
+        double horizontalZoom = FitZoom(compactScale,
+            panelWidth / (.028 + (columns - 1) * .13 + .05 + .035), Zoom);
         double stride = .13 * horizontalZoom;
         double profileWidth = .05 * horizontalZoom;
         double askOffset = .036 * horizontalZoom;
@@ -1050,7 +1062,7 @@ public class DeepLensProbe : Indicator
         // Keep the established top-tick alignment; reserve room for the bottom tick
         // which can lie up to one group below the final row's center.
         double availableHeight = panelHeight - 2 * paddingY;
-        double step = Math.Min(preferredStep, availableHeight / (visibleRows + .5));
+        double step = FitZoom(.027 * compactScale, availableHeight / (visibleRows + .5), Zoom);
         double rowOrigin = panelTop + paddingY + step * .5;
         double TickToPanelY(double tick) => rowOrigin + (top - tick) * step / group;
         int font = Math.Max(6, (int)Math.Round(preferredFont * step / preferredStep));
@@ -1062,7 +1074,7 @@ public class DeepLensProbe : Indicator
         nativeLabelFallbackStride = labelStride;
         bool profileLimited = false;
         ClearRows();
-        label.Text = $"DeepLens v0.6.26 | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
+        label.Text = $"DeepLens v0.6.27 | RENKO 30|1 | {(frozenView != null ? "FROZEN" : UseSelectedZone ? $"ZONE page {zonePageIndex + 1}/{zonePageCount}, {zoneTotal} bars" : "LIVE")} | {group} ticks/row | Zoom {Zoom}%";
         label.FontSize = font + 2;
         settingsStatus.Visible = ShowDiagnostics;
         modeLabel.X = panelLeft;
